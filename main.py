@@ -5,8 +5,8 @@
 #   using forward modelling. ....
 #
 #
-import os
 
+import os
 import numpy as np
 from astropy.io import fits
 from astropy.wcs import WCS
@@ -14,6 +14,7 @@ from astropy.wcs import WCS
 __author__ = 'Michael Albrow'
 
 class Image():
+
     def __init__(self, f_name: str, x_range: tuple = None, y_range: tuple = None):
 
         if f_name is None:
@@ -64,6 +65,19 @@ def omoms(x: np.ndarray, order: int) -> np.ndarray:
     raise ValueError("Order must be an integer between 0 and 3.")
 
 
+def design_matrix(images: list, ra: np.ndarray, dec: np.ndarray) -> np.ndarray:
+
+    p = len(images)*16
+    m = len(images[0].coords.ra.degree)*len(images[0].coords.dec.degree)*len(images)
+
+    ra_mid = 0.5*(ra[1:]+ra[:-1])
+    dec_mid = 0.5*(dec[1:]+dec[:-1])
+
+    A = np.empty((p, m))
+
+    return A
+
+
 
 if __name__ == '__main__':
 
@@ -73,5 +87,23 @@ if __name__ == '__main__':
     yrange = (2000, 2010)
 
     images = [Image(f, xrange, yrange) for f in files]
+
+    ra = images[0].coords.ra.degree
+    dec = images[0].coords.dec.degree
+
+    ra_range = (np.min(ra), np.max(ra))
+    dec_range = (np.min(dec), np.max(dec))
+
+    print("Coordinate ranges:", ra_range, dec_range)
+
+    # Divide ra and dec ranges into n_pixel divisions
+    ra_out = np.linspace(*ra_range, num=(xrange[1]-xrange[0]+1), endpoint=True)
+    dec_out = np.linspace(*dec_range, num=(yrange[1]-yrange[0]+1), endpoint=True)
+    ra_mid = 0.5*(ra_out[1:]+ra_out[:-1])
+    dec_mid = 0.5*(dec_out[1:]+dec_out[:-1])
+
+    print("Coordinate output vectors:", ra_mid, dec_mid)
+
+    A = design_matrix(images, ra_out, dec_out)
 
 

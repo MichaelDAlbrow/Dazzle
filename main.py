@@ -2,7 +2,7 @@
 #  Dazzle
 #
 #   Construct an oversampled representation of an image from dithered undersampled images
-#   using forward modelling.
+#   using forward modelling. ....
 #
 #
 import os

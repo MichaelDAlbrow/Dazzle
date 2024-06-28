@@ -43,9 +43,9 @@ class Image():
             if not (0 <= y_range[0] < y_range[1] <= ny):
                 raise ValueError(f"Invalid y_range: {y_range}")
 
-            x = np.arange(x_range[0], x_range[1])
-            y = np.arange(y_range[0], y_range[1])
-            x, y = np.meshgrid(x, y)
+            self.x = np.arange(x_range[0], x_range[1])
+            self.y = np.arange(y_range[0], y_range[1])
+            x, y = np.meshgrid(self.x, self.y)
 
             self.coords = self.wcs.pixel_to_world(x, y)
 
@@ -67,13 +67,60 @@ def omoms(x: np.ndarray, order: int) -> np.ndarray:
 
 def design_matrix(images: list, ra: np.ndarray, dec: np.ndarray) -> np.ndarray:
 
-    p = len(images)*16
-    m = len(images[0].coords.ra.degree)*len(images[0].coords.dec.degree)*len(images)
-
     ra_mid = 0.5*(ra[1:]+ra[:-1])
     dec_mid = 0.5*(dec[1:]+dec[:-1])
 
-    A = np.empty((p, m))
+    n_ra = len(ra_mid)
+    n_dec = len(dec_mid)
+
+    ra_width = ra_mid[0] - ra[0]
+    dec_width = dec_mid[0] - dec[0]
+
+    print("ra_mid", ra_mid)
+    print("dec_mid", dec_mid)
+    print("ra_width", ra_width)
+    print("dec_width", dec_width)
+
+
+    p = len(ra_mid)*len(dec_mid)*16
+    m = len(images[0].coords.ra.degree)*len(images[0].coords.dec.degree)*len(images)
+
+    A = np.zeros((m, p**2))
+
+    # Iterate over all input image pixels (im, ix, iy).
+    # k is the row number.
+    # jra and jdec are the indices of this pixel in (ra, dec) space.
+
+    k = 0
+    for im in images:
+        for ix in range(len(im.x)):
+
+            for iy in range(len(im.y)):
+
+                print('ra')
+                print(ra)
+                print('dec')
+                print(dec)
+                print('im ra dec')
+                print(im.coords[ix,iy].ra.degree, im.coords[ix, iy].dec.degree)
+
+                jra = np.where((ra_mid - ra_width < im.coords[ix, iy].ra.degree) &
+                                       (ra_mid + ra_width > im.coords[ix, iy].ra.degree))[0]
+                jdec = np.where((dec_mid - dec_width < im.coords[ix, iy].dec.degree) &
+                                     (dec_mid + dec_width > im.coords[ix, iy].dec.degree))[0]
+
+                if len(jra) > 0 and len(jdec) > 0:
+
+                    jra = jra[0]
+                    jdec = jdec[0]
+
+                    # 16 non-zero basis functions for each row
+                    for ord_x in range(4):
+                        xp = omoms(im.coords[ix, iy].ra.degree-ra_mid[jra], ord_x)
+                        for ord_y in range(4):
+                            A[k, 16*(jra*n_dec+jdec)+4*ord_x+ord_y] = (
+                                    xp * omoms(im.coords[ix, iy].dec.degree-dec_mid[jdec], ord_y))
+                k += 1
 
     return A
 
@@ -105,5 +152,9 @@ if __name__ == '__main__':
     print("Coordinate output vectors:", ra_mid, dec_mid)
 
     A = design_matrix(images, ra_out, dec_out)
+
+    print(A.shape)
+
+
 
 

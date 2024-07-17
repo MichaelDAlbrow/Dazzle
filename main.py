@@ -11,11 +11,18 @@ import numpy as np
 from astropy.io import fits
 from astropy.wcs import WCS
 
+
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
 __author__ = 'Michael Albrow'
 
-class Image():
 
-    def __init__(self, f_name: str, x_range: tuple = None, y_range: tuple = None):
+class Image:
+
+    def __init__(self, f_name: str, x_range: tuple = None, y_range: tuple = None) -> None:
 
         if f_name is None:
             raise ValueError("File name must be provided")
@@ -27,9 +34,7 @@ class Image():
             self.header = f[0].header
             self.wcs = WCS(f[0].header)
 
-            self.data = f[0].data
-
-            ny, nx = self.data.shape  # Assuming 2D image data
+            ny, nx = f[0].data.shape  # Assuming 2D image data
 
             # Use the provided ranges or default to the full range
             if x_range is None:
@@ -43,14 +48,41 @@ class Image():
             if not (0 <= y_range[0] < y_range[1] <= ny):
                 raise ValueError(f"Invalid y_range: {y_range}")
 
-            self.x = np.arange(x_range[0], x_range[1])
-            self.y = np.arange(y_range[0], y_range[1])
-            x, y = np.meshgrid(self.x, self.y)
+            self.data = f[0].data[x_range[0]:x_range[1], y_range[0]:y_range[1]]
 
-            self.coords = self.wcs.pixel_to_world(x, y)
+        self.x = np.arange(x_range[0], x_range[1])
+        self.y = np.arange(y_range[0], y_range[1])
+
+        # For now we make an assumption about the noise
+        exptime_s = 144
+        self.sigma = np.sqrt(self.data / exptime_s)
+        self.sigma[self.data < 0] = 1.e10
+
+        self.mask = np.ones_like(self.data)
+        self.mask[self.data < 0] = 0.0
+
+        self.dy_subpix = None
+        self.dx_subpix = None
+        self.dy_int = None
+        self.dx_int = None
+
+    def compute_offset(self, ref_im: 'Image') -> np.ndarray:
+        """Compute the integer and subpixel offsets from the reference image using the WCS."""
+        x1_ref, y1_ref = 1, 1
+        c = self.wcs.pixel_to_world(x1_ref, y1_ref)
+        x2_ref, y2_ref = ref_im.wcs.world_to_pixel(c)
+        dx = x1_ref - x2_ref
+        dy = y1_ref - y2_ref
+        self.dx_int = np.rint(dy).astype(int)
+        self.dy_int = np.rint(dx).astype(int)
+        self.dx_subpix = (dy - self.dx_int)
+        self.dy_subpix = (dx - self.dy_int)
+        print(self.f_name, dx, dy)
+        return np.array([dx, dy])
 
 
-def omoms(x: np.ndarray, order: int) -> np.ndarray:
+def omoms(x: float | np.ndarray, order: int) -> float | np.ndarray:
+    """Cubic O-MOMS polynomials of given order evaluated at x."""
 
     match order:
         case 0:
@@ -65,96 +97,155 @@ def omoms(x: np.ndarray, order: int) -> np.ndarray:
     raise ValueError("Order must be an integer between 0 and 3.")
 
 
-def design_matrix(images: list, ra: np.ndarray, dec: np.ndarray) -> np.ndarray:
+def data_vector(images: list[Image], i: int, j: int) -> np.ndarray:
+    """Compute the vector of all image data values for pixels i, j."""
 
-    ra_mid = 0.5*(ra[1:]+ra[:-1])
-    dec_mid = 0.5*(dec[1:]+dec[:-1])
+    m = len(images)
+    y = np.zeros(m)
 
-    n_ra = len(ra_mid)
-    n_dec = len(dec_mid)
+    for k, im in enumerate(images):
+        try:
+            y[k] = im.data[i + im.dx_int, j + im.dy_int]
+        except IndexError:
+            print("IndexError", i, im.dx_int, j, im.dy_int)
+            raise
 
-    ra_width = ra_mid[0] - ra[0]
-    dec_width = dec_mid[0] - dec[0]
-
-    print("ra_mid", ra_mid)
-    print("dec_mid", dec_mid)
-    print("ra_width", ra_width)
-    print("dec_width", dec_width)
+    return y
 
 
-    p = len(ra_mid)*len(dec_mid)*16
-    m = len(images[0].coords.ra.degree)*len(images[0].coords.dec.degree)*len(images)
+def inverse_variance_vector(images: list[Image], i: int, j: int) -> np.ndarray:
+    """Compute the inverse variance vector for all image pixels."""
 
-    A = np.zeros((m, p**2))
+    m = len(images)
+    c = np.zeros(m)
 
-    # Iterate over all input image pixels (im, ix, iy).
-    # k is the row number.
-    # jra and jdec are the indices of this pixel in (ra, dec) space.
+    for k, im in enumerate(images):
+        c[k] = im.mask[i + im.dx_int, j + im.dy_int] / im.sigma[i + im.dx_int, j + im.dy_int] ** 2
+    return c
 
-    k = 0
-    for im in images:
-        for ix in range(len(im.x)):
 
-            for iy in range(len(im.y)):
+def design_matrix(images: list[Image]) -> np.ndarray:
+    """Compute the design matrix for bicubic OMOMS basis functions, given a list of images with
+    pixel offsets from a reference."""
 
-                print('ra')
-                print(ra)
-                print('dec')
-                print(dec)
-                print('im ra dec')
-                print(im.coords[ix,iy].ra.degree, im.coords[ix, iy].dec.degree)
+    p = 4
+    m = len(images)
 
-                jra = np.where((ra_mid - ra_width < im.coords[ix, iy].ra.degree) &
-                                       (ra_mid + ra_width > im.coords[ix, iy].ra.degree))[0]
-                jdec = np.where((dec_mid - dec_width < im.coords[ix, iy].dec.degree) &
-                                     (dec_mid + dec_width > im.coords[ix, iy].dec.degree))[0]
+    A = np.zeros((m, p ** 2))
 
-                if len(jra) > 0 and len(jdec) > 0:
+    for k, im in enumerate(images):
 
-                    jra = jra[0]
-                    jdec = jdec[0]
-
-                    # 16 non-zero basis functions for each row
-                    for ord_x in range(4):
-                        xp = omoms(im.coords[ix, iy].ra.degree-ra_mid[jra], ord_x)
-                        for ord_y in range(4):
-                            A[k, 16*(jra*n_dec+jdec)+4*ord_x+ord_y] = (
-                                    xp * omoms(im.coords[ix, iy].dec.degree-dec_mid[jdec], ord_y))
-                k += 1
+        for ord_x in range(4):
+            xp = omoms(im.dx_subpix, ord_x)
+            for ord_y in range(4):
+                A[k, 4 * ord_x + ord_y] = xp * omoms(im.dy_subpix, ord_y)
 
     return A
 
 
+def solve_linear(images: list[Image], xrange: tuple, yrange: tuple, debug: bool = False) -> np.ndarray:
+    """Set up and solve the system of linear equations."""
+
+    X = design_matrix(images)
+
+    if debug:
+        print('X')
+        print(X)
+
+    nx = xrange[1] - xrange[0]
+    ny = yrange[1] - yrange[0]
+    result = np.zeros((nx, ny, 16))
+
+    for i in range(xrange[0], xrange[1]):
+        for j in range(yrange[0], yrange[1]):
+            y = data_vector(images, i, j)
+            C_inv = inverse_variance_vector(images, i, j)
+
+            A = np.dot(X.T * C_inv, X)
+            try:
+                B = np.linalg.solve(A, np.identity(A.shape[0]))
+            except np.linalg.LinAlgError:
+                continue
+
+            result[i - xrange[0], j - yrange[0], :] = np.dot(B, np.dot(X.T, y * C_inv))
+
+            if debug:
+                print('y')
+                print(y)
+                print('C_inv')
+                print(C_inv)
+                print('result')
+                print(result)
+
+    return result
+
+
+def evaluate_bicubic_omoms(theta, xrange: tuple, yrange: tuple, oversample_ratio=10) -> np.ndarray:
+    """Evaluate the bicubic omoms function with coefficients theta at (x, y)."""
+
+    nx = xrange[1] - xrange[0]
+    ny = yrange[1] - yrange[0]
+    z = np.zeros((nx * oversample_ratio, ny * oversample_ratio))
+
+    x = np.linspace(-0.5, 0.5, oversample_ratio)
+    y = np.linspace(-0.5, 0.5, oversample_ratio)
+    yy, xx = np.meshgrid(-x, -y)
+
+    for i in range(nx):
+        for j in range(ny):
+            zp = np.zeros((oversample_ratio, oversample_ratio))
+            for ord_x in range(4):
+                xp = omoms(xx, ord_x)
+                for ord_y in range(4):
+                    zp += xp * omoms(yy, ord_y) * theta[i, j, 4 * ord_x + ord_y]
+            z[i * oversample_ratio:(i + 1) * oversample_ratio, j * oversample_ratio:(j + 1) * oversample_ratio] = zp
+
+    return z
+
+
+def plot_offsets(offsets: np.ndarray) -> None:
+    """Plot the offsets."""
+    fig, ax = plt.subplots(2, 2, figsize=(11, 11))
+    ax[0, 0].scatter(offsets[:, 0], offsets[:, 1], marker="o", s=5)
+    ax[0, 0].set_xlabel('dx')
+    ax[0, 0].set_ylabel('dy')
+    ax[0, 1].scatter(offsets[:, 0] - np.rint(offsets[:, 0]), offsets[:, 1] - np.rint(offsets[:, 1]), marker="o", s=5)
+    ax[0, 1].set_xlabel('dx')
+    ax[0, 1].set_ylabel('dy')
+    ax[1, 0].hist(np.rint(offsets[:, 0]), bins=np.linspace(-3.5, 3.5, 8))
+    ax[1, 0].set_xlabel('dx')
+    ax[1, 0].set_ylabel('N')
+    ax[1, 1].hist(np.rint(offsets[:, 1]), bins=np.linspace(-3.5, 3.5, 8))
+    ax[1, 1].set_xlabel('dy')
+    ax[1, 1].set_ylabel('N')
+    plt.savefig("offsets.png")
+
 
 if __name__ == '__main__':
 
-    files = [f for f in os.listdir() if "synthpop_test14_t" in f and f.endswith(".fits")]
+    files = [f"Data/{f}" for f in os.listdir("Data") if "synthpop_test16_t" in f and f.endswith(".fits")]
+    files.sort()
 
-    xrange = (2000, 2010)
-    yrange = (2000, 2010)
+    input_yrange = (1680, 2340)
+    input_xrange = (1980, 2640)
 
-    images = [Image(f, xrange, yrange) for f in files]
+    images = [Image(f, input_xrange, input_yrange) for f in files]
 
-    ra = images[0].coords.ra.degree
-    dec = images[0].coords.dec.degree
+    # Compute the offset in pixels between each image and the first one.
+    offsets = np.zeros((len(images), 2))
+    for k, im in enumerate(images):
+        offsets[k, :] = im.compute_offset(images[0])
+    print("offsets standard deviation:", np.std(offsets[:, 0]), np.std(offsets[:, 1]))
+    plot_offsets(offsets)
+    output_yrange = (-int(np.min(offsets[:, 0])), images[0].data.shape[0]-int(np.max(offsets[:, 0]))-1)
+    output_xrange = (-int(np.min(offsets[:, 1])), images[0].data.shape[1]-int(np.max(offsets[:, 1]))-1)
 
-    ra_range = (np.min(ra), np.max(ra))
-    dec_range = (np.min(dec), np.max(dec))
+    theta = solve_linear(images, output_xrange, output_yrange, debug=False)
 
-    print("Coordinate ranges:", ra_range, dec_range)
+    z = evaluate_bicubic_omoms(theta, output_xrange, output_yrange)
 
-    # Divide ra and dec ranges into n_pixel divisions
-    ra_out = np.linspace(*ra_range, num=(xrange[1]-xrange[0]+1), endpoint=True)
-    dec_out = np.linspace(*dec_range, num=(yrange[1]-yrange[0]+1), endpoint=True)
-    ra_mid = 0.5*(ra_out[1:]+ra_out[:-1])
-    dec_mid = 0.5*(dec_out[1:]+dec_out[:-1])
+    hdu = fits.PrimaryHDU(z)
+    hdu.writeto('output.fits', overwrite=True)
 
-    print("Coordinate output vectors:", ra_mid, dec_mid)
-
-    A = design_matrix(images, ra_out, dec_out)
-
-    print(A.shape)
-
-
-
-
+    hdu = fits.PrimaryHDU(images[0].data)
+    hdu.writeto('test0.fits', overwrite=True)

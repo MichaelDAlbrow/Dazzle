@@ -11,13 +11,14 @@ import numpy as np
 from astropy.io import fits
 from astropy.wcs import WCS
 
+import time
 
 import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-__author__ = 'Michael Albrow'
+__author__ = "Michael Albrow"
 
 
 class Image:
@@ -143,14 +144,10 @@ def design_matrix(images: list[Image]) -> np.ndarray:
     return A
 
 
-def solve_linear(images: list[Image], xrange: tuple, yrange: tuple, debug: bool = False) -> np.ndarray:
-    """Set up and solve the system of linear equations."""
+def solve_linear(images: list[Image], xrange: tuple, yrange: tuple) -> np.ndarray:
+    """For each pixel, set up and solve the system of linear equations to compute the basis coefficients."""
 
     X = design_matrix(images)
-
-    if debug:
-        print('X')
-        print(X)
 
     nx = xrange[1] - xrange[0]
     ny = yrange[1] - yrange[0]
@@ -169,19 +166,11 @@ def solve_linear(images: list[Image], xrange: tuple, yrange: tuple, debug: bool 
 
             result[i - xrange[0], j - yrange[0], :] = np.dot(B, np.dot(X.T, y * C_inv))
 
-            if debug:
-                print('y')
-                print(y)
-                print('C_inv')
-                print(C_inv)
-                print('result')
-                print(result)
-
     return result
 
 
 def evaluate_bicubic_omoms(theta, xrange: tuple, yrange: tuple, oversample_ratio=10) -> np.ndarray:
-    """Evaluate the bicubic omoms function with coefficients theta at (x, y)."""
+    """Evaluate the bicubic omoms function with coefficients theta over xrange, yrange."""
 
     nx = xrange[1] - xrange[0]
     ny = yrange[1] - yrange[0]
@@ -203,25 +192,55 @@ def evaluate_bicubic_omoms(theta, xrange: tuple, yrange: tuple, oversample_ratio
     return z
 
 
+def make_difference_images(images: list[Image], theta: np.ndarray, xrange: tuple, yrange: tuple,
+                           output_dir: str = "Results", prefix: str = "d_") -> None:
+    """Construct and save difference images."""
+    try:
+        os.mkdir(output_dir)
+    except FileExistsError:
+        pass
+
+    for im in images:
+
+        # Basis functions evaluated at image offset
+        basis = np.zeros(16)
+        for ord_x in range(4):
+            xp = omoms(im.dx_subpix, ord_x)
+            for ord_y in range(4):
+                basis[4*ord_x + ord_y] = xp * omoms(im.dy_subpix, ord_y)
+
+        z = np.zeros_like(im.data)
+        for i in range(xrange[0], xrange[1]):
+            for j in range(yrange[0], yrange[1]):
+                z[i+im.dx_int, j+im.dy_int] = np.dot(basis, theta[i-xrange[0], j-yrange[0]])
+
+        # z is still the sampled image, not the difference image
+
+        hdu = fits.PrimaryHDU(im.data - z)
+        hdu.writeto(f"{output_dir}/{prefix}{os.path.basename(im.f_name)}", overwrite=True)
+
+
 def plot_offsets(offsets: np.ndarray) -> None:
     """Plot the offsets."""
     fig, ax = plt.subplots(2, 2, figsize=(11, 11))
     ax[0, 0].scatter(offsets[:, 0], offsets[:, 1], marker="o", s=5)
-    ax[0, 0].set_xlabel('dx')
-    ax[0, 0].set_ylabel('dy')
+    ax[0, 0].set_xlabel("dx")
+    ax[0, 0].set_ylabel("dy")
     ax[0, 1].scatter(offsets[:, 0] - np.rint(offsets[:, 0]), offsets[:, 1] - np.rint(offsets[:, 1]), marker="o", s=5)
-    ax[0, 1].set_xlabel('dx')
-    ax[0, 1].set_ylabel('dy')
+    ax[0, 1].set_xlabel("dx")
+    ax[0, 1].set_ylabel("dy")
     ax[1, 0].hist(np.rint(offsets[:, 0]), bins=np.linspace(-3.5, 3.5, 8))
-    ax[1, 0].set_xlabel('dx')
-    ax[1, 0].set_ylabel('N')
+    ax[1, 0].set_xlabel("dx")
+    ax[1, 0].set_ylabel("N")
     ax[1, 1].hist(np.rint(offsets[:, 1]), bins=np.linspace(-3.5, 3.5, 8))
-    ax[1, 1].set_xlabel('dy')
-    ax[1, 1].set_ylabel('N')
+    ax[1, 1].set_xlabel("dy")
+    ax[1, 1].set_ylabel("N")
     plt.savefig("offsets.png")
 
 
 if __name__ == '__main__':
+
+    start = time.perf_counter()
 
     files = [f"Data/{f}" for f in os.listdir("Data") if "synthpop_test16_t" in f and f.endswith(".fits")]
     files.sort()
@@ -229,7 +248,9 @@ if __name__ == '__main__':
     input_yrange = (1680, 2340)
     input_xrange = (1980, 2640)
 
-    images = [Image(f, input_xrange, input_yrange) for f in files]
+    n_input_images = 20
+
+    images = [Image(f, input_xrange, input_yrange) for f in files[:n_input_images]]
 
     # Compute the offset in pixels between each image and the first one.
     offsets = np.zeros((len(images), 2))
@@ -240,12 +261,16 @@ if __name__ == '__main__':
     output_yrange = (-int(np.min(offsets[:, 0])), images[0].data.shape[0]-int(np.max(offsets[:, 0]))-1)
     output_xrange = (-int(np.min(offsets[:, 1])), images[0].data.shape[1]-int(np.max(offsets[:, 1]))-1)
 
-    theta = solve_linear(images, output_xrange, output_yrange, debug=False)
+    # Compute the coefficients of the basis functions for each image pixel
+    theta = solve_linear(images, output_xrange, output_yrange)
 
+    # Compute and save an oversampled image
     z = evaluate_bicubic_omoms(theta, output_xrange, output_yrange)
-
     hdu = fits.PrimaryHDU(z)
-    hdu.writeto('output.fits', overwrite=True)
+    hdu.writeto("output.fits", overwrite=True)
 
-    hdu = fits.PrimaryHDU(images[0].data)
-    hdu.writeto('test0.fits', overwrite=True)
+    # Difference images
+    make_difference_images(images, theta, output_xrange, output_yrange)
+
+    end = time.perf_counter()
+    print(f"Elapsed time: {end-start:0.2f} seconds")

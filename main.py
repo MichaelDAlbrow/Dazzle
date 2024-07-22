@@ -50,17 +50,12 @@ class Image:
                 raise ValueError(f"Invalid y_range: {y_range}")
 
             self.data = f[0].data[x_range[0]:x_range[1], y_range[0]:y_range[1]]
+            self.sigma = f[1].data[x_range[0]:x_range[1], y_range[0]:y_range[1]]
+            self.mask = 1 - f[2].data[x_range[0]:x_range[1], y_range[0]:y_range[1]]
+            self.mask[self.mask < 0] = 0
 
         self.x = np.arange(x_range[0], x_range[1])
         self.y = np.arange(y_range[0], y_range[1])
-
-        # For now we make an assumption about the noise
-        exptime_s = 144
-        self.sigma = np.sqrt(self.data / exptime_s)
-        self.sigma[self.data < 0] = 1.e10
-
-        self.mask = np.ones_like(self.data)
-        self.mask[self.data < 0] = 0.0
 
         self.dy_subpix = None
         self.dx_subpix = None
@@ -267,7 +262,7 @@ if __name__ == '__main__':
     # Compute and save an oversampled image
     z = evaluate_bicubic_omoms(theta, output_xrange, output_yrange)
     hdu = fits.PrimaryHDU(z)
-    hdu.writeto("output.fits", overwrite=True)
+    hdu.writeto("oversampled.fits", overwrite=True)
 
     # Difference images
     make_difference_images(images, theta, output_xrange, output_yrange)

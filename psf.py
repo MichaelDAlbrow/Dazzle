@@ -12,7 +12,7 @@ def construct_psf(filter: str = 'F146', detector: str = 'SCA01',
     wfi.detector = detector
     wfi.detector_position = position
 
-    # Centre the PSF on a pixel centre.
+    # Centre the PSF between pixels.
     wfi.options['parity'] = 'even'
 
     psf = wfi.calc_psf(oversample=10)
@@ -20,9 +20,9 @@ def construct_psf(filter: str = 'F146', detector: str = 'SCA01',
     return psf
 
 
-grid = nis.psf_grid(num_psfs=9, verbose=False)
 
 if __name__ == '__main__':
+
     psf = construct_psf()
     print(psf)
     print(type(psf))

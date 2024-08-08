@@ -59,14 +59,11 @@ class Image:
 
             self.data = f[0].data[x_range[0]:x_range[1], y_range[0]:y_range[1]].T
             self.sigma = f[1].data[x_range[0]:x_range[1], y_range[0]:y_range[1]].T
-            #self.mask = 1 - f[2].data[x_range[0]:x_range[1], y_range[0]:y_range[1]].T
-            #self.mask[self.mask < 0] = 0
             self.mask = np.ones_like(self.data)
             self.mask[self.data < 0] = 0.0
 
             self.inv_var = self.mask / self.sigma ** 2
             self.inv_var[np.isnan(self.inv_var)] = 0.0
-            #self.inv_var = np.ones_like(self.data)
 
         self.x = np.arange(x_range[0], x_range[1])
         self.y = np.arange(y_range[0], y_range[1])
@@ -82,16 +79,20 @@ class Image:
 
     def compute_offset(self, ref_im: 'Image') -> np.ndarray:
         """Compute the integer and subpixel offsets from the reference image using the WCS."""
+
         x1_ref, y1_ref = 1, 1
         c = self.wcs.pixel_to_world(x1_ref, y1_ref)
         x2_ref, y2_ref = ref_im.wcs.world_to_pixel(c)
         dx = x1_ref - x2_ref
         dy = y1_ref - y2_ref
+
         self.dx_int = np.rint(dx).astype(int)
         self.dy_int = np.rint(dy).astype(int)
         self.dx_subpix = (dx - self.dx_int)
         self.dy_subpix = (dy - self.dy_int)
+
         print(self.f_name, dx, dy)
+
         return np.array([dx, dy])
 
 
@@ -299,6 +300,7 @@ def evaluate_bicubic_legendre(theta, xrange: tuple, yrange: tuple, oversample_ra
 def make_difference_images(images: list[Image], theta: np.ndarray, xrange: tuple, yrange: tuple,
                            output_dir: str = "Results", iteration: int = 0) -> None:
     """Construct and save difference images."""
+
     try:
         os.mkdir(output_dir)
     except FileExistsError:
@@ -387,8 +389,9 @@ def refine_offsets(images: list[Image], xrange: tuple, yrange: tuple) -> np.ndar
     b = np.zeros(2)
 
     for k, im in enumerate(images):
+
         # im.inv_var is already set to zero for saturated pixels.
-        # For this purpose we also don't want to count neighbouring pixels.
+        # For this function we don't want to count adjacent pixels.
 
         iv = minimum_filter(im.inv_var, size=3, mode="constant", cval=0.0)
 
@@ -444,23 +447,27 @@ if __name__ == '__main__':
     input_xrange = (1000, 3000)
 
     n_input_images = len(files)
-    #n_input_images = 20
     reference_image_range = (0, 96)
 
     images = [Image(f, input_xrange, input_yrange) for f in files[:n_input_images]]
 
     # Compute the offset in pixels between each image and the first one.
+
     offsets = np.zeros((len(images), 2))
     for k, im in enumerate(images):
         offsets[k, :] = im.compute_offset(images[0])
+
     print("offsets standard deviation:", np.std(offsets[:, 0]), np.std(offsets[:, 1]))
     plot_offsets(offsets)
+
     output_xrange = (-np.rint(np.min(offsets[:, 0])).astype(int),
                      images[0].data.shape[0] - np.rint(np.max(offsets[:, 0])).astype(int) - 1)
     output_yrange = (-np.rint(np.min(offsets[:, 1])).astype(int),
                      images[0].data.shape[1] - np.rint(np.max(offsets[:, 1])).astype(int) - 1)
+
     print("Input ranges:", input_xrange, input_yrange)
     print("Output ranges:", output_xrange, output_yrange)
+
     end = time.perf_counter()
     print(f"Elapsed time: {end - start:0.2f} seconds")
 
@@ -471,6 +478,7 @@ if __name__ == '__main__':
     for iter in range(1):
 
         if iter == 0:
+
             # Compute the coefficients of the basis functions for each image pixel
             print("Computing coefficients ...")
             theta = solve_linear(images, output_xrange, output_yrange, reference_image_range=reference_image_range)

@@ -96,6 +96,32 @@ class Image:
         return np.array([dx, dy])
 
 
+def write_as_fits(f_name: str, data: np.ndarray, supplementary_data: dict = None, supplementary_header: dict = None,
+                  overwrite: bool = True) -> None:
+    """
+    Write an image array to a FITS file.
+    If provided, supplementary_data should be a dictionary of image arrays to be saved as extensions.
+    """
+
+    if not f_name.endswith(".fits"):
+        f_name += ".fits"
+
+    hdr = fits.Header()
+    if supplementary_header is not None:
+        for key, value in supplementary_header.items():
+            hdr[key] = value
+
+    data_HDU = fits.PrimaryHDU(data.T, header=hdr)
+    HDU_list = fits.HDUList([data_HDU])
+
+    if supplementary_data is not None:
+        for key, value in supplementary_data.items():
+            HDU = fits.ImageHDU(data=value.T, name=key)
+            HDU_list.append(HDU)
+
+    HDU_list.writeto(f_name, overwrite=overwrite)
+
+
 def legendre(x: float | np.ndarray, order: int) -> float | np.ndarray:
     """Shifted legendre functions of given order evaluated at x."""
 
@@ -265,9 +291,7 @@ def solve_linear(images: list[Image], xrange: tuple, yrange: tuple, reference_im
             result[i - xrange[0], j - yrange[0], :] = np.dot(B, np.dot(X.T, y * C_inv)).reshape(POLY_ORDER, POLY_ORDER)
 
     if save:
-        hdu = fits.PrimaryHDU(result)
-        hdulist = fits.HDUList([hdu])
-        hdulist.writeto(output_file, overwrite=True)
+        write_as_fits(output_file, result)
 
     return result
 
@@ -339,45 +363,39 @@ def make_difference_images(images: list[Image], theta: np.ndarray, xrange: tuple
         # For now, we write out lots of information. This shouldn't be necessary in the future.
 
         prefix = f"d_{iteration:02d}_"
-        hdu = fits.PrimaryHDU((im.data - im.model).T)
-        hdu.writeto(f"{output_dir}/{prefix}{os.path.basename(im.f_name)}", overwrite=True)
+        write_as_fits(f"{output_dir}/{prefix}{os.path.basename(im.f_name)}", im.data - im.model,
+                      supplementary_data={"INV_VAR": im.inv_var},
+                      supplementary_header={"DX_INT": im.dx_int, "DY_INT": im.dy_int,
+                                            "DX_SUBPIX": im.dx_subpix, "DY_SUBPIX": im.dy_subpix})
 
         prefix = f"z_{iteration:02d}_"
-        hdu = fits.PrimaryHDU(im.model.T)
-        hdu.writeto(f"{output_dir}/{prefix}{os.path.basename(im.f_name)}", overwrite=True)
+        write_as_fits(f"{output_dir}/{prefix}{os.path.basename(im.f_name)}", im.model)
 
         prefix = f"r_{iteration:02d}_"
         r = im.data - im.model
         r[np.isnan(r)] = 0.0
         im.difference = r
-        hdu = fits.PrimaryHDU(r.T)
-        hdu.writeto(f"{output_dir}/{prefix}{os.path.basename(im.f_name)}", overwrite=True)
+        write_as_fits(f"{output_dir}/{prefix}{os.path.basename(im.f_name)}", r)
 
         prefix = f"rx_{iteration:02d}_"
-        hdu = fits.PrimaryHDU(im.dRdx.T)
-        hdu.writeto(f"{output_dir}/{prefix}{os.path.basename(im.f_name)}", overwrite=True)
+        write_as_fits(f"{output_dir}/{prefix}{os.path.basename(im.f_name)}", im.dRdx)
 
         prefix = f"ry_{iteration:02d}_"
-        hdu = fits.PrimaryHDU(im.dRdy.T)
-        hdu.writeto(f"{output_dir}/{prefix}{os.path.basename(im.f_name)}", overwrite=True)
+        write_as_fits(f"{output_dir}/{prefix}{os.path.basename(im.f_name)}", im.dRdy)
 
         prefix = f"a_{iteration:02d}_"
-        hdu = fits.PrimaryHDU(im.data.T)
-        hdu.writeto(f"{output_dir}/{prefix}{os.path.basename(im.f_name)}", overwrite=True)
+        write_as_fits(f"{output_dir}/{prefix}{os.path.basename(im.f_name)}", im.data)
 
         prefix = f"e_{iteration:02d}_"
-        r = im.mask.T * r.T / im.sigma.T
+        r = im.mask * r / im.sigma
         r[np.isnan(r)] = 0.0
-        hdu = fits.PrimaryHDU(r)
-        hdu.writeto(f"{output_dir}/{prefix}{os.path.basename(im.f_name)}", overwrite=True)
+        write_as_fits(f"{output_dir}/{prefix}{os.path.basename(im.f_name)}", r)
 
         prefix = f"m_{iteration:02d}_"
-        hdu = fits.PrimaryHDU(im.mask.T)
-        hdu.writeto(f"{output_dir}/{prefix}{os.path.basename(im.f_name)}", overwrite=True)
+        write_as_fits(f"{output_dir}/{prefix}{os.path.basename(im.f_name)}", im.mask)
 
         prefix = f"iv_{iteration:02d}_"
-        hdu = fits.PrimaryHDU(im.inv_var.T)
-        hdu.writeto(f"{output_dir}/{prefix}{os.path.basename(im.f_name)}", overwrite=True)
+        write_as_fits(f"{output_dir}/{prefix}{os.path.basename(im.f_name)}", im.inv_var)
 
 
 def refine_offsets(images: list[Image], xrange: tuple, yrange: tuple) -> np.ndarray:
@@ -443,8 +461,8 @@ if __name__ == '__main__':
 
     #input_yrange = (2080, 2100)
     #input_xrange = (2090, 2110)
-    input_yrange = (1000, 3000)
-    input_xrange = (1000, 3000)
+    input_yrange = (1500, 2500)
+    input_xrange = (1500, 2500)
 
     n_input_images = len(files)
     reference_image_range = (0, 96)
@@ -492,8 +510,7 @@ if __name__ == '__main__':
             print(f"Elapsed time: {end - start:0.2f} seconds")
 
             print("Writing oversampled image ...")
-            hdu = fits.PrimaryHDU(z.T)
-            hdu.writeto(f"Results/test18_oversampled_{iter:02d}.fits", overwrite=True)
+            write_as_fits(f"Results/test18_oversampled_{iter:02d}.fits", z)
             end = time.perf_counter()
             print(f"Elapsed time: {end - start:0.2f} seconds")
 

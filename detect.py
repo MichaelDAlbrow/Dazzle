@@ -39,7 +39,7 @@ def plot_magnitude_histogram(stars: QTable, file: str = "magnitudes.png") -> Non
 
 
 def display_detected_stars(im: np.ndarray, sources: QTable, file: str = 'detected_stars.png') -> None:
-    """Make a plot of the image with detected stars indicated"""
+    """Make a plot of the image with detected stars indicated."""
 
     # Display the image with a "square root stretch" - this makes fainter stars show up better
     z_min = np.percentile(im, 2)

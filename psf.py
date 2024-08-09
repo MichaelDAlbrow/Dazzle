@@ -15,7 +15,7 @@ def construct_psf(filter: str = 'F146', detector: str = 'SCA01',
     # Centre the PSF between pixels.
     wfi.options['parity'] = 'even'
 
-    psf = wfi.calc_psf(oversample=10)
+    psf = wfi.calc_psf(oversample=10, normalize='last')
 
     return psf
 

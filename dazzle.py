@@ -554,7 +554,7 @@ if __name__ == '__main__':
         print(f"Elapsed time: {end - start:0.2f} seconds")
 
         # Difference images
-        print("Making difference images ...")
+        print("Making difference images  ...")
         make_difference_images(images, theta, output_xrange, output_yrange, iteration=iter)
         end = time.perf_counter()
         print(f"Elapsed time: {end - start:0.2f} seconds")

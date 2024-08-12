@@ -59,8 +59,9 @@ class Image:
 
             self.data = f[0].data[x_range[0]:x_range[1], y_range[0]:y_range[1]].T
             self.sigma = f[1].data[x_range[0]:x_range[1], y_range[0]:y_range[1]].T
-            self.mask = np.ones_like(self.data)
-            self.mask[self.data < 0] = 0.0
+            self.mask = np.ones_like(self.data, dtype=bool)
+            self.mask[self.data < 0] = 0
+            self.vmask = np.ones_like(self.data, dtype=bool)
 
             self.inv_var = self.mask / self.sigma ** 2
             self.inv_var[np.isnan(self.inv_var)] = 0.0
@@ -111,7 +112,7 @@ def write_as_fits(f_name: str, data: np.ndarray, supplementary_data: dict = None
         for key, value in supplementary_header.items():
             hdr[key] = value
 
-    data_HDU = fits.PrimaryHDU(data.T, header=hdr)
+    data_HDU = fits.PrimaryHDU(data.T.astype(np.double), header=hdr)
     HDU_list = fits.HDUList([data_HDU])
 
     if supplementary_data is not None:
@@ -217,7 +218,7 @@ def inverse_variance_vector(images: list[Image], i: int, j: int) -> np.ndarray:
     c = np.zeros(m)
 
     for k, im in enumerate(images):
-        c[k] = im.inv_var[i + im.dx_int, j + im.dy_int]
+        c[k] = im.inv_var[i + im.dx_int, j + im.dy_int] * im.vmask[i + im.dx_int, j + im.dy_int]
     return c
 
 
@@ -360,13 +361,19 @@ def make_difference_images(images: list[Image], theta: np.ndarray, xrange: tuple
         im.dRdy[xrange[0] + im.dx_int:xrange[1] + im.dx_int, yrange[0] + im.dy_int:yrange[1] + im.dy_int] = (
             np.einsum("ijml,m,l", theta, xp, yp_grad))
 
+        # Update mask to include edge pixels
+        im.mask[:xrange[0]+1, :] = 0
+        im.mask[xrange[1]-2:, :] = 0
+        im.mask[:, :yrange[0]+1] = 0
+        im.mask[:, yrange[1]-2:] = 0
+
         # For now, we write out lots of information. This shouldn't be necessary in the future.
 
         prefix = f"d_{iteration:02d}_"
         write_as_fits(f"{output_dir}/{prefix}{os.path.basename(im.f_name)}", im.data - im.model,
                       supplementary_data={"INV_VAR": im.inv_var},
                       supplementary_header={"DX_INT": im.dx_int, "DY_INT": im.dy_int,
-                                            "DX_SUBPIX": im.dx_subpix, "DY_SUBPIX": im.dy_subpix})
+                                            "DX_SUB": im.dx_subpix, "DY_SUB": im.dy_subpix})
 
         prefix = f"z_{iteration:02d}_"
         write_as_fits(f"{output_dir}/{prefix}{os.path.basename(im.f_name)}", im.model)
@@ -394,8 +401,42 @@ def make_difference_images(images: list[Image], theta: np.ndarray, xrange: tuple
         prefix = f"m_{iteration:02d}_"
         write_as_fits(f"{output_dir}/{prefix}{os.path.basename(im.f_name)}", im.mask)
 
+        prefix = f"vm_{iteration:02d}_"
+        write_as_fits(f"{output_dir}/{prefix}{os.path.basename(im.f_name)}", im.vmask)
+
         prefix = f"iv_{iteration:02d}_"
         write_as_fits(f"{output_dir}/{prefix}{os.path.basename(im.f_name)}", im.inv_var)
+
+
+def mask_difference_image_residuals(images: list[Image], threshold: float = 5.0) -> None:
+    """Create a mask to flag high difference image residuals."""
+
+    for im in images:
+
+        try:
+            residual = im.mask * im.difference * np.sqrt(im.inv_var)
+        except TypeError:
+            print(f"No difference image for {im.f_name}.")
+            return
+
+        mask = minimum_filter(im.mask, size=3, mode="constant", cval=0.0) * im.vmask
+
+        residual_amplitude = np.std(residual[mask.astype(bool)])
+
+        im.vmask = np.ones_like(im.data, dtype=bool)
+        im.vmask[residual**2 > (threshold*residual_amplitude)**2] = 0
+
+        n_pixels_masked = np.prod(im.data.shape) - np.sum(im.vmask)
+        print(f"{im.f_name}: amplitude {residual_amplitude}, threshold {threshold*residual_amplitude}, {n_pixels_masked} pixels masked.")
+
+        if "0146" in im.f_name:
+            print(im.difference[100:110, 100:110])
+            print(im.sigma[100:110, 100:110])
+            print(residual[100:110, 100:110])
+            print(im.mask[100:110, 100:110])
+            print(np.std(residual[100:110, 100:110]))
+            write_as_fits("resid0146.fits", residual)
+
 
 
 def refine_offsets(images: list[Image], xrange: tuple, yrange: tuple) -> np.ndarray:
@@ -465,7 +506,7 @@ if __name__ == '__main__':
     input_xrange = (1500, 2500)
 
     n_input_images = len(files)
-    reference_image_range = (0, 96)
+    reference_image_range = (0, n_input_images)
 
     images = [Image(f, input_xrange, input_yrange) for f in files[:n_input_images]]
 
@@ -493,26 +534,24 @@ if __name__ == '__main__':
     #images[-1].dx_subpix += 0.05
     #images[-1].dy_subpix += 0.1
 
-    for iter in range(1):
+    for iter in range(4):
 
-        if iter == 0:
+        # Compute the coefficients of the basis functions for each image pixel
+        print("Computing coefficients ...")
+        theta = solve_linear(images, output_xrange, output_yrange, reference_image_range=reference_image_range)
+        end = time.perf_counter()
+        print(f"Elapsed time: {end - start:0.2f} seconds")
 
-            # Compute the coefficients of the basis functions for each image pixel
-            print("Computing coefficients ...")
-            theta = solve_linear(images, output_xrange, output_yrange, reference_image_range=reference_image_range)
-            end = time.perf_counter()
-            print(f"Elapsed time: {end - start:0.2f} seconds")
+        # Compute and save an oversampled image
+        print("Computing oversampled image ...")
+        z = evaluate_bicubic_legendre(theta, output_xrange, output_yrange)
+        end = time.perf_counter()
+        print(f"Elapsed time: {end - start:0.2f} seconds")
 
-            # Compute and save an oversampled image
-            print("Computing oversampled image ...")
-            z = evaluate_bicubic_legendre(theta, output_xrange, output_yrange)
-            end = time.perf_counter()
-            print(f"Elapsed time: {end - start:0.2f} seconds")
-
-            print("Writing oversampled image ...")
-            write_as_fits(f"Results/test18_oversampled_{iter:02d}.fits", z)
-            end = time.perf_counter()
-            print(f"Elapsed time: {end - start:0.2f} seconds")
+        print("Writing oversampled image ...")
+        write_as_fits(f"Results/test18_oversampled_{iter:02d}.fits", z)
+        end = time.perf_counter()
+        print(f"Elapsed time: {end - start:0.2f} seconds")
 
         # Difference images
         print("Making difference images ...")
@@ -520,8 +559,14 @@ if __name__ == '__main__':
         end = time.perf_counter()
         print(f"Elapsed time: {end - start:0.2f} seconds")
 
-        # Refining offsets
-        print("Refining offsets ...")
-        refine_offsets(images, output_xrange, output_yrange)
+        # Mask high residual pixels
+        print("Masking high residual pixels ...")
+        mask_difference_image_residuals(images)
         end = time.perf_counter()
         print(f"Elapsed time: {end - start:0.2f} seconds")
+
+        # # Refining offsets
+        # print("Refining offsets ...")
+        # refine_offsets(images, output_xrange, output_yrange)
+        # end = time.perf_counter()
+        # print(f"Elapsed time: {end - start:0.2f} seconds")

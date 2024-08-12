@@ -6,7 +6,6 @@
 #
 #
 
-import sys
 import os
 import numpy as np
 from astropy.io import fits
@@ -14,10 +13,8 @@ from astropy.wcs import WCS
 
 from scipy.ndimage import minimum_filter
 
-import time
 
 import matplotlib
-
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
@@ -362,10 +359,10 @@ def make_difference_images(images: list[Image], theta: np.ndarray, xrange: tuple
             np.einsum("ijml,m,l", theta, xp, yp_grad))
 
         # Update mask to include edge pixels
-        im.mask[:xrange[0]+1, :] = 0
-        im.mask[xrange[1]-2:, :] = 0
-        im.mask[:, :yrange[0]+1] = 0
-        im.mask[:, yrange[1]-2:] = 0
+        im.mask[:xrange[0]+2, :] = 0
+        im.mask[xrange[1]-3:, :] = 0
+        im.mask[:, :yrange[0]+2] = 0
+        im.mask[:, yrange[1]-3:] = 0
 
         # For now, we write out lots of information. This shouldn't be necessary in the future.
 
@@ -429,14 +426,7 @@ def mask_difference_image_residuals(images: list[Image], threshold: float = 5.0)
         n_pixels_masked = np.prod(im.data.shape) - np.sum(im.vmask)
         print(f"{im.f_name}: amplitude {residual_amplitude}, threshold {threshold*residual_amplitude}, {n_pixels_masked} pixels masked.")
 
-        if "0146" in im.f_name:
-            print(im.difference[100:110, 100:110])
-            print(im.sigma[100:110, 100:110])
-            print(residual[100:110, 100:110])
-            print(im.mask[100:110, 100:110])
-            print(np.std(residual[100:110, 100:110]))
-            write_as_fits("resid0146.fits", residual)
-
+        write_as_fits(f"Results/resid_{os.path.basename(im.f_name)}", residual)
 
 
 def refine_offsets(images: list[Image], xrange: tuple, yrange: tuple) -> np.ndarray:
@@ -465,6 +455,19 @@ def refine_offsets(images: list[Image], xrange: tuple, yrange: tuple) -> np.ndar
         delta_xy[k, :] = np.linalg.solve(A, b)
         im.dx_subpix -= delta_xy[k, 0]
         im.dy_subpix -= delta_xy[k, 1]
+
+        if im.dx_subpix < -0.5:
+            im.dx_int -= 1
+            im.dx_subpix += 1.0
+        if im.dx_subpix > 0.5:
+            im.dx_int += 1
+            im.dx_subpix -= 1.0
+        if im.dy_subpix < -0.5:
+            im.dy_int -= 1
+            im.dy_subpix += 1.0
+        if im.dy_subpix > 0.5:
+            im.dy_int += 1
+            im.dy_subpix -= 1.0
 
     return delta_xy
 
@@ -495,78 +498,4 @@ def plot_offsets(offsets: np.ndarray) -> None:
 
 if __name__ == '__main__':
 
-    start = time.perf_counter()
-
-    files = [f"Data/test18/{f}" for f in os.listdir("Data/test18") if "synthpop_test18_t" in f and f.endswith(".fits")]
-    files.sort()
-
-    #input_yrange = (2080, 2100)
-    #input_xrange = (2090, 2110)
-    input_yrange = (1500, 2500)
-    input_xrange = (1500, 2500)
-
-    n_input_images = len(files)
-    reference_image_range = (0, n_input_images)
-
-    images = [Image(f, input_xrange, input_yrange) for f in files[:n_input_images]]
-
-    # Compute the offset in pixels between each image and the first one.
-
-    offsets = np.zeros((len(images), 2))
-    for k, im in enumerate(images):
-        offsets[k, :] = im.compute_offset(images[0])
-
-    print("offsets standard deviation:", np.std(offsets[:, 0]), np.std(offsets[:, 1]))
-    plot_offsets(offsets)
-
-    output_xrange = (-np.rint(np.min(offsets[:, 0])).astype(int),
-                     images[0].data.shape[0] - np.rint(np.max(offsets[:, 0])).astype(int) - 1)
-    output_yrange = (-np.rint(np.min(offsets[:, 1])).astype(int),
-                     images[0].data.shape[1] - np.rint(np.max(offsets[:, 1])).astype(int) - 1)
-
-    print("Input ranges:", input_xrange, input_yrange)
-    print("Output ranges:", output_xrange, output_yrange)
-
-    end = time.perf_counter()
-    print(f"Elapsed time: {end - start:0.2f} seconds")
-
-    # test refine offsets
-    #images[-1].dx_subpix += 0.05
-    #images[-1].dy_subpix += 0.1
-
-    for iter in range(4):
-
-        # Compute the coefficients of the basis functions for each image pixel
-        print("Computing coefficients ...")
-        theta = solve_linear(images, output_xrange, output_yrange, reference_image_range=reference_image_range)
-        end = time.perf_counter()
-        print(f"Elapsed time: {end - start:0.2f} seconds")
-
-        # Compute and save an oversampled image
-        print("Computing oversampled image ...")
-        z = evaluate_bicubic_legendre(theta, output_xrange, output_yrange)
-        end = time.perf_counter()
-        print(f"Elapsed time: {end - start:0.2f} seconds")
-
-        print("Writing oversampled image ...")
-        write_as_fits(f"Results/test18_oversampled_{iter:02d}.fits", z)
-        end = time.perf_counter()
-        print(f"Elapsed time: {end - start:0.2f} seconds")
-
-        # Difference images
-        print("Making difference images  ...")
-        make_difference_images(images, theta, output_xrange, output_yrange, iteration=iter)
-        end = time.perf_counter()
-        print(f"Elapsed time: {end - start:0.2f} seconds")
-
-        # Mask high residual pixels
-        print("Masking high residual pixels ...")
-        mask_difference_image_residuals(images)
-        end = time.perf_counter()
-        print(f"Elapsed time: {end - start:0.2f} seconds")
-
-        # # Refining offsets
-        # print("Refining offsets ...")
-        # refine_offsets(images, output_xrange, output_yrange)
-        # end = time.perf_counter()
-        # print(f"Elapsed time: {end - start:0.2f} seconds")
+    pass

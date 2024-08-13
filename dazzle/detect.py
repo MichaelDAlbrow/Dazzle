@@ -60,7 +60,7 @@ def display_detected_stars(im: np.ndarray, sources: QTable, file: str = 'detecte
 
 
 if __name__ == "__main__":
-    with fits.open("oversampled.fits") as f:
+    with fits.open("../oversampled.fits") as f:
         im = f[0].data
 
     stars_table = detect_stars(im)

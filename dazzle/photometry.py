@@ -43,6 +43,8 @@ def psf_phot(image: Image, psf: np.ndarray, pos: (float, float)) -> float:
     """Fit psf to image at pos. """
 
     # Evaluate pixel-sampled PSF with correct subpixel offsets
+    # This will include the subpixel part of pos, the offset of this image
+    # from the reference, and the centering of the PSF in its array.
 
     raise NotImplemented
 
@@ -56,7 +58,7 @@ if __name__ == '__main__':
 
     start = time.perf_counter()
 
-    files = [f"Results/{f}" for f in os.listdir("Results") if "d_00_" in f and f.endswith(".fits")]
+    files = [f"Results/{f}" for f in os.listdir("../Results") if "d_00_" in f and f.endswith(".fits")]
     files.sort()
 
     images = [Image(f) for f in files]

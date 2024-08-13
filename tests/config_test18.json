@@ -1,0 +1,14 @@
+{
+  "data_dir": "/Users/mda45/Projects/Dazzle/Data/test18",
+  "data_root": "synthpop_test18_t",
+  "output_dir": "/Users/mda45/Projects/Dazzle/Data/test18_results",
+  "input_xrange": [
+    1900,
+    2100
+  ],
+  "input_yrange": [
+    1900,
+    2100
+  ]
+}
+

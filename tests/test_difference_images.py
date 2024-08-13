@@ -1,24 +1,53 @@
+import sys
 import os
 import time
 import numpy as np
-import dazzle
+import json
+
+from context import dazzle
 
 start = time.perf_counter()
 
-files = [f"Data/test18/{f}" for f in os.listdir("Data/test18") if "synthpop_test18_t" in f and f.endswith(".fits")]
+
+#
+#  Configuration
+#
+
+config_file = sys.argv[1]
+
+with open(f"{os.path.dirname(__file__)}/{config_file}") as file:
+    config_data = json.load(file)
+
+for field in ["data_dir", "data_root", "output_dir", "input_xrange", "input_yrange"]:
+    if field not in config_data:
+        raise Exception("Missing field {field} in {config_file}.")
+
+if not os.path.isdir(config_data["output_dir"]):
+    os.mkdir(config_data["output_dir"])
+
+#
+#  Set up data
+#
+
+files = [f"{config_data['data_dir']}/{f}" for f in os.listdir(config_data["data_dir"]) if config_data["data_root"] in f and f.endswith(".fits")]
+
 files.sort()
 
-# input_yrange = (2080, 2100)
-# input_xrange = (2090, 2110)
-input_yrange = (1800, 2200)
-input_xrange = (1800, 2200)
+input_xrange = config_data["input_xrange"]
+input_yrange = config_data["input_yrange"]
 
 n_input_images = len(files)
-reference_image_range = (0, n_input_images)
+
+if "reference_stack_range" in config_data:
+    reference_image_range = config_data["reference_stack_range"]
+else:
+    reference_image_range = (0, n_input_images)
 
 images = [dazzle.Image(f, input_xrange, input_yrange) for f in files[:n_input_images]]
 
+#
 # Compute the offset in pixels between each image and the first one.
+#
 
 offsets = np.zeros((len(images), 2))
 for k, im in enumerate(images):
@@ -62,13 +91,14 @@ for iteration in range(3):
     print(f"Elapsed time: {end - start:0.2f} seconds")
 
     print("Writing oversampled image ...")
-    dazzle.write_as_fits(f"Results/test18_oversampled_{iteration:02d}.fits", z)
+    dazzle.write_as_fits(f"{config_data['output_dir']}/oversampled_{iteration:02d}.fits", z)
     end = time.perf_counter()
     print(f"Elapsed time: {end - start:0.2f} seconds")
 
     # Difference images
     print("Making difference images  ...")
-    dazzle.make_difference_images(images, theta, output_xrange, output_yrange, iteration=iteration)
+    dazzle.make_difference_images(images, theta, output_xrange, output_yrange, output_dir=config_data["output_dir"],
+                                  iteration=iteration)
     end = time.perf_counter()
     print(f"Elapsed time: {end - start:0.2f} seconds")
 
@@ -76,7 +106,7 @@ for iteration in range(3):
     #
     #     # Refining offsets
     #     print("Refining offsets ...")
-    #     dazzle.refine_offsets(images, output_xrange, output_yrange)
+    #     dazzle.refine_offsets(images)
     #     end = time.perf_counter()
     #     print(f"Elapsed time: {end - start:0.2f} seconds")
     #

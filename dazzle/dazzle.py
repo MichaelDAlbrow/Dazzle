@@ -121,7 +121,9 @@ def write_as_fits(f_name: str, data: np.ndarray, supplementary_data: dict = None
 
 
 def legendre(x: float | np.ndarray, order: int) -> float | np.ndarray:
-    """Shifted legendre functions of given order evaluated at x."""
+    """
+    Shifted legendre functions of given order evaluated at x.
+   """
 
     match order:
         case 0:
@@ -141,7 +143,9 @@ def legendre(x: float | np.ndarray, order: int) -> float | np.ndarray:
 
 
 def grad_legendre(x: float | np.ndarray, order: int) -> float | np.ndarray:
-    """Gradient of shifted legendre functions of given order evaluated at x."""
+    """
+    Gradient of shifted legendre functions of given order evaluated at x.
+    """
 
     match order:
         case 0:
@@ -426,10 +430,8 @@ def mask_difference_image_residuals(images: list[Image], threshold: float = 5.0)
         n_pixels_masked = np.prod(im.data.shape) - np.sum(im.vmask)
         print(f"{im.f_name}: amplitude {residual_amplitude}, threshold {threshold*residual_amplitude}, {n_pixels_masked} pixels masked.")
 
-        write_as_fits(f"Results/resid_{os.path.basename(im.f_name)}", residual)
 
-
-def refine_offsets(images: list[Image], xrange: tuple, yrange: tuple) -> np.ndarray:
+def refine_offsets(images: list[Image]) -> np.ndarray:
     """Computes changes to the offsets defined for each image from the astrometric reference."""
 
     delta_xy = np.zeros((len(images), 2))

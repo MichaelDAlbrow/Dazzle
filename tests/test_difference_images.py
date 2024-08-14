@@ -2,9 +2,9 @@ import sys
 import os
 import time
 import numpy as np
-import json
 
-from context import dazzle
+from context import dazzle, utils
+
 
 start = time.perf_counter()
 
@@ -13,17 +13,10 @@ start = time.perf_counter()
 #  Configuration
 #
 
-config_file = sys.argv[1]
+print(sys.argv)
 
-with open(f"{os.path.dirname(__file__)}/{config_file}") as file:
-    config_data = json.load(file)
+config_data = utils.read_config(f"{os.path.dirname(__file__)}/{sys.argv[1]}")
 
-for field in ["data_dir", "data_root", "output_dir", "input_xrange", "input_yrange"]:
-    if field not in config_data:
-        raise Exception("Missing field {field} in {config_file}.")
-
-if not os.path.isdir(config_data["output_dir"]):
-    os.mkdir(config_data["output_dir"])
 
 #
 #  Set up data
@@ -54,7 +47,7 @@ for k, im in enumerate(images):
     offsets[k, :] = im.compute_offset(images[0])
 
 print("offsets standard deviation:", np.std(offsets[:, 0]), np.std(offsets[:, 1]))
-dazzle.plot_offsets(offsets)
+dazzle.plot_offsets(offsets, output_dir=config_data["output_dir"])
 
 output_xrange = (-np.rint(np.min(offsets[:, 0])).astype(int),
                  images[0].data.shape[0] - np.rint(np.max(offsets[:, 0])).astype(int) - 1)
@@ -80,7 +73,8 @@ for iteration in range(3):
 
     # Compute the coefficients of the basis functions for each image pixel
     print("Computing coefficients ...")
-    theta = dazzle.solve_linear(images, output_xrange, output_yrange, reference_image_range=reference_image_range)
+    theta = dazzle.solve_linear(images, output_xrange, output_yrange, reference_image_range=reference_image_range,
+                                output_dir=config_data["output_dir"])
     end = time.perf_counter()
     print(f"Elapsed time: {end - start:0.2f} seconds")
 

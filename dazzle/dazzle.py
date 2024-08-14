@@ -242,7 +242,7 @@ def design_matrix(images: list[Image]) -> np.ndarray:
 
 
 def solve_linear(images: list[Image], xrange: tuple, yrange: tuple, reference_image_range: tuple = None,
-                 save: bool = True, output_file: str = "coefficients.fits") -> np.ndarray:
+                 save: bool = True, output_dir: str = "tests", output_file: str = "coefficients.fits") -> np.ndarray:
     """For each pixel, set up and solve the system of linear equations to compute the basis coefficients."""
 
     def solve_linear_pixel(i: int, j: int) -> (int, int, np.ndarray):
@@ -293,7 +293,7 @@ def solve_linear(images: list[Image], xrange: tuple, yrange: tuple, reference_im
             result[i - xrange[0], j - yrange[0], :] = np.dot(B, np.dot(X.T, y * C_inv)).reshape(POLY_ORDER, POLY_ORDER)
 
     if save:
-        write_as_fits(output_file, result)
+        write_as_fits(f"{output_dir}/{output_file}", result)
 
     return result
 
@@ -474,7 +474,7 @@ def refine_offsets(images: list[Image]) -> np.ndarray:
     return delta_xy
 
 
-def plot_offsets(offsets: np.ndarray) -> None:
+def plot_offsets(offsets: np.ndarray, output_dir: str) -> None:
     """Plot the offsets."""
 
     fig, ax = plt.subplots(2, 2, figsize=(11, 11))
@@ -495,7 +495,7 @@ def plot_offsets(offsets: np.ndarray) -> None:
     ax[1, 1].set_xlabel("dy")
     ax[1, 1].set_ylabel("N")
 
-    plt.savefig("offsets.png")
+    plt.savefig(f"{output_dir}/offsets.png")
 
 
 if __name__ == '__main__':

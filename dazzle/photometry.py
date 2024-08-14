@@ -2,7 +2,7 @@ import sys
 import os
 import numpy as np
 from astropy.io import fits
-
+from photutils.psf import webbpsf_reader, GriddedPSFModel
 import time
 
 __author__ = "Michael Albrow"
@@ -27,16 +27,16 @@ class Image:
             self.data = f[0].data.T
             self.inv_var = f[1].data.T
 
-            self.dx_subpix = f[0].header['DX_SUBPIX']
-            self.dy_subpix = f[0].header['DY_SUBPIX']
+            self.dx_subpix = f[0].header['DX_SUB']
+            self.dy_subpix = f[0].header['DY_SUB']
             self.dx_int = f[0].header['DX_INT']
             self.dy_int = f[0].header['DY_INT']
 
 
-def read_psf_image(f_name: str) -> np.ndarray:
-    with fits.open(f_name) as f:
-        data = f["OVERDIST"].data
-    return data
+def read_psf_grid(f_name: str) -> GriddedPSFModel:
+    """Read PSF grid created by WebbPSF."""
+    grid = webbpsf_reader(f_name)
+    return grid
 
 
 def psf_phot(image: Image, psf: np.ndarray, pos: (float, float)) -> float:
@@ -48,6 +48,7 @@ def psf_phot(image: Image, psf: np.ndarray, pos: (float, float)) -> float:
 
     raise NotImplemented
 
+
 def extract_lightcurve(images: list[Image], psf: np.ndarray, initial_pos: tuple[float, float]) -> np.ndarray:
     """Do psf photometry on difference-image stack."""
 
@@ -56,16 +57,4 @@ def extract_lightcurve(images: list[Image], psf: np.ndarray, initial_pos: tuple[
 
 if __name__ == '__main__':
 
-    start = time.perf_counter()
-
-    files = [f"Results/{f}" for f in os.listdir("../Results") if "d_00_" in f and f.endswith(".fits")]
-    files.sort()
-
-    images = [Image(f) for f in files]
-
-    print(images[3].dx_subpix)
-
-    psf = read_psf_image("test_psf.fits")
-
-    end = time.perf_counter()
-    print(f"Elapsed time: {end - start:0.2f} seconds")
+    pass

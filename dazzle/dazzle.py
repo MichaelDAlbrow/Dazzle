@@ -80,7 +80,7 @@ class Image:
 
         x1_ref, y1_ref = 1, 1
         c = self.wcs.pixel_to_world(x1_ref, y1_ref)
-        x2_ref, y2_ref = ref_im.wcs.world_to_pixel(c)
+        x2_ref, y2_ref = ref_im.wcs.world_to_pixel(c)   # Do we want world_to_array_index() here instead?
         dx = x1_ref - x2_ref
         dy = y1_ref - y2_ref
 

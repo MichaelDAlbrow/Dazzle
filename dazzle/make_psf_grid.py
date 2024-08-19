@@ -13,7 +13,7 @@ def construct_psf_grid(filter: str = 'F146', detector: str = 'SCA01', save: bool
     wfi.filter = filter
     wfi.detector = detector
 
-    grid = wfi.psf_grid(num_psfs=9, all_detectors=False, oversample=10, save=save, outdir=outdir)
+    grid = wfi.psf_grid(num_psfs=9, all_detectors=False, oversample=10, save=save, outdir=outdir, outfile="b011.fits")
 
     return grid
 
@@ -45,3 +45,4 @@ if __name__ == '__main__':
 
     psf_grid = construct_psf_grid(save=True, outdir=PSF_dir)
 
+    print(psf_grid.data.shape)

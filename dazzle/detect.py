@@ -1,5 +1,5 @@
 #
-#  Dazzle photometry module
+#  Dazzle detect module
 #
 import numpy as np
 from photutils.detection import DAOStarFinder
@@ -8,6 +8,11 @@ from astropy.table import QTable
 from astropy.io import fits
 from astropy.visualization import SqrtStretch
 from astropy.visualization.mpl_normalize import ImageNormalize
+
+from scipy.ndimage import convolve, maximum_filter, binary_dilation
+from scipy.signal import correlate
+
+from .utils import write_as_fits
 
 import matplotlib
 import matplotlib.pyplot as plt
@@ -28,6 +33,108 @@ def detect_stars(im: np.ndarray | str, threshold: float = 100.0) -> QTable:
     sources = finder(im - np.min(im))
 
     return sources
+
+
+def romanisim_artifacts_mask(im: np.ndarray, outfile=None) -> np.ndarray:
+    """Detect and mask the square residuals left around saturated stars by RomainISIM/WebbPSF."""
+
+    mask = np.ones_like(im)
+    # kernel = -np.ones((46, 46))
+    # kernel[3:43, 3:43] = 0
+    # kernel[1, 1:45] = 2
+    # kernel[-2, 1:45] = 2
+    # kernel[1:45, 1] = 2
+    # kernel[1:45, -2] = 2
+    threshold = 100
+    kernel = np.array([[-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1],
+                       [2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2],
+                       [-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1]])
+    c_im = convolve(im, kernel, mode='constant')
+    mask[abs(c_im) > threshold] = 0
+    c_im = convolve(im, kernel.T, mode='constant')
+    mask[abs(c_im) > threshold] = 0
+    mask = 1 - binary_dilation(1-mask).astype(mask.dtype)
+    if outfile is not None:
+        write_as_fits(outfile, mask)
+    return mask
+
+
+def detect_variables_from_difference_image_stack(images: list['Image'], threshold: float = 50.0):
+    """Detect variables from difference image stack."""
+
+    #
+    #  Stack all the difference images onto a common grid (i.e. remove the integer-pixel dithers).
+    #
+
+    dx_images = [im.dx_int for im in images]
+    dy_images = [im.dy_int for im in images]
+    dx_min = np.min(dx_images)
+    dx_max = np.max(dx_images)
+    dy_min = np.min(dy_images)
+    dy_max = np.max(dy_images)
+
+    shape = images[0].data.shape
+    stack = np.zeros((len(images), shape[0]+dx_max-dx_min, shape[1]+dy_max-dy_min))
+
+    mask_kernel = np.ones((5, 5))
+
+    for i, im in enumerate(images):
+
+        #
+        # Mask near saturated pixels
+        #
+        mask = im.inv_var < 0.01
+        mask = 1 - convolve(mask, mask_kernel, mode='constant')
+
+        #
+        # Also mask square artifacts left by RomanISIM
+        #
+        artifact_mask = romanisim_artifacts_mask(im.data * im.inv_var)
+
+        x0 = -im.dx_int + dx_max
+        y0 = -im.dy_int + dy_max
+
+        stack[i, x0:x0+shape[0], y0:y0+shape[1]] = im.data * mask * artifact_mask
+
+    #
+    #  Filter the stack by convolving with 3d gaussians designed to approximately
+    #  match the PSF size in the spatial directions, and various timescales in the temporal direction.
+    #
+
+    spatial_sigma = 1.0
+    spatial_sigma_int = np.ceil(spatial_sigma).astype(int)
+
+    edge_mask = np.ones_like(stack)
+    edge_mask[:, :(dx_max+10), :] = 0
+    edge_mask[:, (dx_min-10):, :] = 0
+    edge_mask[:, :, :(dy_max+10)] = 0
+    edge_mask[:, :, (dy_min-10):] = 0
+    edge_mask[:2, :, :] = 0
+    edge_mask[-2:, :, :] = 0
+
+    for temporal_sigma in [2, 4, 8, 16]:
+
+        temporal_sigma_int = np.ceil(temporal_sigma).astype(int)
+
+        kernel_t_range = np.linspace(-temporal_sigma_int, temporal_sigma_int, 2*temporal_sigma_int+1)
+        kernel_s_range = np.linspace(-spatial_sigma_int, spatial_sigma_int, 2*spatial_sigma_int+1)
+        x, y, z = np.meshgrid(kernel_t_range, kernel_s_range, kernel_s_range, indexing='ij')
+        kernel = np.exp(-(x**2/(2*temporal_sigma**2) + y**2/(2*spatial_sigma**2) + z**2/(2*spatial_sigma**2)))
+        kernel /= np.sum(kernel)
+        conv_stack = convolve(stack, kernel, mode='constant', cval=0.0)
+
+        #
+        #  Find peaks.
+        #
+        local_peaks = maximum_filter(conv_stack, size=(3*temporal_sigma_int+1, 3*spatial_sigma_int+1, 3*spatial_sigma_int+1)) == conv_stack
+        threshold_cut = conv_stack > threshold
+        significance_map = local_peaks * threshold_cut
+        peak_locations = np.where((significance_map == 1) & (edge_mask == 1))
+
+        #for i, j, k in zip(peak_locations[0], peak_locations[1], peak_locations[2]):
+        #    print(i, j, k, temporal_sigma, stack[i, j, k], conv_stack[i, j, k], edge_mask[i, j, k])
+
+        return np.array(peak_locations).T
 
 
 def plot_magnitude_histogram(stars: QTable, file: str = "magnitudes.png") -> None:

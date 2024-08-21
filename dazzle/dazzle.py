@@ -13,6 +13,7 @@ from astropy.wcs import WCS
 
 from scipy.ndimage import minimum_filter
 
+from .utils import write_as_fits
 
 import matplotlib
 matplotlib.use("Agg")
@@ -92,32 +93,6 @@ class Image:
         print(self.f_name, dx, dy)
 
         return np.array([dx, dy])
-
-
-def write_as_fits(f_name: str, data: np.ndarray, supplementary_data: dict = None, supplementary_header: dict = None,
-                  overwrite: bool = True) -> None:
-    """
-    Write an image array to a FITS file.
-    If provided, supplementary_data should be a dictionary of image arrays to be saved as extensions.
-    """
-
-    if not f_name.endswith(".fits"):
-        f_name += ".fits"
-
-    hdr = fits.Header()
-    if supplementary_header is not None:
-        for key, value in supplementary_header.items():
-            hdr[key] = value
-
-    data_HDU = fits.PrimaryHDU(data.T.astype(np.double), header=hdr)
-    HDU_list = fits.HDUList([data_HDU])
-
-    if supplementary_data is not None:
-        for key, value in supplementary_data.items():
-            HDU = fits.ImageHDU(data=value.T, name=key)
-            HDU_list.append(HDU)
-
-    HDU_list.writeto(f_name, overwrite=overwrite)
 
 
 def legendre(x: float | np.ndarray, order: int) -> float | np.ndarray:

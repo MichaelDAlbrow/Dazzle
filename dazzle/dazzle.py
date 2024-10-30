@@ -28,7 +28,7 @@ POLY_ORDER = 5  # i.e. 5 coefficients
 
 class Image:
 
-    def __init__(self, f_name: str, x_range: tuple = None, y_range: tuple = None) -> None:
+    def __init__(self, f_name: str, x_range: tuple = None, y_range: tuple = None, debug: bool = False) -> None:
 
         if f_name is None:
             raise ValueError("File name must be provided")
@@ -37,6 +37,8 @@ class Image:
 
         with fits.open(f_name) as f:
 
+            if debug:
+                print(f"Reading {f_name}")
             self.f_name = f_name
             self.header = f[0].header
             self.wcs = WCS(f[0].header)
@@ -76,7 +78,7 @@ class Image:
         self.dy_int = None
         self.dx_int = None
 
-    def compute_offset(self, ref_im: 'Image') -> np.ndarray:
+    def compute_offset(self, ref_im: 'Image', debug: bool = False) -> np.ndarray:
         """Compute the integer and subpixel offsets from the reference image using the WCS."""
 
         x1_ref, y1_ref = 1, 1
@@ -90,15 +92,26 @@ class Image:
         self.dx_subpix = (dx - self.dx_int)
         self.dy_subpix = (dy - self.dy_int)
 
-        print(self.f_name, dx, dy)
+        if debug:
+            print(self.f_name, dx, dy)
 
         return np.array([dx, dy])
+
+
+def basis_function(x: float | np.ndarray, order: int) -> float | np.ndarray:
+    return legendre(x, order)
+
+
+def grad_basis_function(x: np.ndarray, order: int) -> float | np.ndarray:
+    return grad_legendre(x, order)
 
 
 def legendre(x: float | np.ndarray, order: int) -> float | np.ndarray:
     """
     Shifted legendre functions of given order evaluated at x.
    """
+
+    x = x + 0.5
 
     match order:
         case 0:
@@ -122,6 +135,8 @@ def grad_legendre(x: float | np.ndarray, order: int) -> float | np.ndarray:
     Gradient of shifted legendre functions of given order evaluated at x.
     """
 
+    x = x + 0.5
+
     match order:
         case 0:
             return 0.0
@@ -142,6 +157,8 @@ def grad_legendre(x: float | np.ndarray, order: int) -> float | np.ndarray:
 def omoms(x: float | np.ndarray, order: int) -> float | np.ndarray:
     """Cubic O-MOMS polynomials of given order evaluated at x."""
 
+    x = 3*x + 0.5
+
     match order:
         case 0:
             return 4.0 / 21.0 + (-11.0 / 21.0 + (0.5 - x / 6.0) * x) * x
@@ -158,6 +175,8 @@ def omoms(x: float | np.ndarray, order: int) -> float | np.ndarray:
 def grad_omoms(x: float | np.ndarray, order: int) -> float | np.ndarray:
     """Derivatives of cubic O-MOMS polynomials of given order evaluated at x."""
 
+    x = 3*x + 0.5
+
     match order:
         case 0:
             return -11.0 / 21.0 + (1.0 - x / 2.0) * x
@@ -171,67 +190,111 @@ def grad_omoms(x: float | np.ndarray, order: int) -> float | np.ndarray:
     raise ValueError("Order must be an integer between 0 and 3.")
 
 
-def data_vector(images: list[Image], i: int, j: int) -> np.ndarray:
+def data_vector(images: list[Image], i: int, j: int, expand_factor: float = 1.0) -> np.ndarray:
     """Compute the vector of all image data values for pixels i, j."""
 
-    m = len(images)
-    y = np.zeros(m)
+    n = len(images)
+    m = n * 6
+    z = np.zeros(m)
 
-    for k, im in enumerate(images):
-        try:
-            y[k] = im.data[i + im.dx_int, j + im.dy_int]
-        except IndexError:
-            print("IndexError", i, im.dx_int, j, im.dy_int)
-            raise
+    counter = 0
+    for im in images:
+        z[counter] = im.data[i + im.dx_int, j + im.dy_int]
+        counter += 1
+        if im.dx_subpix < 0.5*expand_factor - 1.0:
+            z[counter] = im.data[i + im.dx_int - 1, j + im.dy_int]
+            counter += 1
+        if im.dx_subpix > -0.5*expand_factor + 1.0:
+            z[counter] = im.data[i + im.dx_int + 1, j + im.dy_int]
+            counter += 1
+        if im.dy_subpix < 0.5*expand_factor - 1.0:
+            z[counter] = im.data[i + im.dx_int, j + im.dy_int - 1]
+            counter += 1
+        if im.dy_subpix > -0.5*expand_factor + 1.0:
+            z[counter] = im.data[i + im.dx_int, j + im.dy_int + 1]
+            counter += 1
 
-    return y
+    z = z[:counter]
+
+    return z
 
 
-def inverse_variance_vector(images: list[Image], i: int, j: int) -> np.ndarray:
+def inverse_variance_vector(images: list[Image], i: int, j: int, expand_factor: float = 1.0) -> np.ndarray:
     """Compute the inverse variance vector for all image pixels."""
 
-    m = len(images)
+    m = len(images) * 6
     c = np.zeros(m)
 
-    for k, im in enumerate(images):
-        c[k] = im.inv_var[i + im.dx_int, j + im.dy_int] * im.vmask[i + im.dx_int, j + im.dy_int]
+    counter = 0
+    for im in images:
+        c[counter] = im.inv_var[i + im.dx_int, j + im.dy_int] * im.vmask[i + im.dx_int, j + im.dy_int]
+        counter += 1
+        if im.dx_subpix < 0.5*expand_factor - 1.0:
+            c[counter] = im.inv_var[i + im.dx_int - 1, j + im.dy_int] * im.vmask[i + im.dx_int - 1, j + im.dy_int]
+            counter += 1
+        if im.dx_subpix > -0.5*expand_factor + 1.0:
+            c[counter] = im.inv_var[i + im.dx_int + 1, j + im.dy_int] * im.vmask[i + im.dx_int + 1, j + im.dy_int]
+            counter += 1
+        if im.dy_subpix < 0.5*expand_factor - 1.0:
+            c[counter] = im.inv_var[i + im.dx_int, j + im.dy_int - 1] * im.vmask[i + im.dx_int, j + im.dy_int - 1]
+            counter += 1
+        if im.dy_subpix > -0.5*expand_factor + 1.0:
+            c[counter] = im.inv_var[i + im.dx_int, j + im.dy_int + 1] * im.vmask[i + im.dx_int, j + im.dy_int + 1]
+            counter += 1
+
+    c = c[:counter]
+
     return c
 
 
-def design_matrix(images: list[Image]) -> np.ndarray:
-    """Compute the design matrix for bicubic legendre basis functions, given a list of images with
+def design_matrix(images: list[Image],  expand_factor: float = 1.0) -> np.ndarray:
+    """Compute the design matrix for bi-poly basis functions, given a list of images with
     pixel offsets from a reference."""
 
-    m = len(images)
+    dx = []
+    dy = []
+    for k, im in enumerate(images):
+        dx.append(im.dx_subpix/expand_factor)
+        dy.append(im.dy_subpix/expand_factor)
+        if im.dx_subpix < 0.5*expand_factor - 1.0:
+            dx.append((im.dx_subpix+1.0)/expand_factor)
+            dy.append(im.dy_subpix/expand_factor)
+        if im.dx_subpix > -0.5*expand_factor + 1.0:
+            dx.append((im.dx_subpix-1.0)/expand_factor)
+            dy.append(im.dy_subpix/expand_factor)
+        if im.dy_subpix < 0.5*expand_factor - 1.0:
+            dx.append(im.dx_subpix/expand_factor)
+            dy.append((im.dy_subpix+1.0)/expand_factor)
+        if im.dy_subpix > -0.5*expand_factor + 1.0:
+            dx.append(im.dx_subpix/expand_factor)
+            dy.append((im.dy_subpix-1.0)/expand_factor)
+
+    dx = np.array(dx)
+    dy = np.array(dy)
+    m = len(dx)
+
+    xp = np.zeros((m, POLY_ORDER))
+    yp = np.zeros((m, POLY_ORDER))
+
+    for order in range(POLY_ORDER):
+        xp[:, order] = basis_function(dx, order)
+        yp[:, order] = basis_function(dy, order)
 
     A = np.zeros((m, POLY_ORDER ** 2))
 
-    for k, im in enumerate(images):
-
+    for k in range(m):
         for ord_x in range(POLY_ORDER):
-            xp = legendre(im.dx_subpix, ord_x)
             for ord_y in range(POLY_ORDER):
-                A[k, POLY_ORDER * ord_x + ord_y] = xp * legendre(im.dy_subpix, ord_y)
+                A[k, POLY_ORDER * ord_x + ord_y] = xp[k, ord_x] * yp[k, ord_y]
+
 
     return A
 
 
 def solve_linear(images: list[Image], xrange: tuple, yrange: tuple, reference_image_range: tuple = None,
-                 save: bool = True, output_dir: str = "tests", output_file: str = "coefficients.fits") -> np.ndarray:
+                 expand_factor: float = 1.0, save: bool = True, output_dir: str = "tests",
+                 output_file: str = "coefficients.fits") -> np.ndarray:
     """For each pixel, set up and solve the system of linear equations to compute the basis coefficients."""
-
-    def solve_linear_pixel(i: int, j: int) -> (int, int, np.ndarray):
-        """Solve linear equations to compute basis-function coefficients for one pixel."""
-
-        y = data_vector(images[start:end], i, j)
-        C_inv = inverse_variance_vector(images[start:end], i, j)
-
-        A = np.dot(X.T * C_inv, X)
-        try:
-            B = np.linalg.solve(A, np.identity(A.shape[0]))
-            return i, j, np.dot(B, np.dot(X.T, y * C_inv)).reshape(POLY_ORDER, POLY_ORDER)
-        except np.linalg.LinAlgError:
-            return i, j, np.zeros((POLY_ORDER, POLY_ORDER))
 
     if reference_image_range is not None:
         start = reference_image_range[0]
@@ -240,24 +303,16 @@ def solve_linear(images: list[Image], xrange: tuple, yrange: tuple, reference_im
         start = 0
         end = len(images)
 
-    X = design_matrix(images[start:end])
+    X = design_matrix(images[start:end], expand_factor=expand_factor)
 
     nx = xrange[1] - xrange[0]
     ny = yrange[1] - yrange[0]
     result = np.zeros((nx, ny, POLY_ORDER, POLY_ORDER))
 
-    # with ProcessPoolExecutor(max_workers=16) as executor:
-    #     futures = [executor.submit(solve_linear_pixel, i, j) for i in range(xrange[0], xrange[1]) for j in
-    #                range(yrange[0], yrange[1])]
-    #
-    #     for future in futures:
-    #         i, j, res = future.result()
-    #         result[i - xrange[0], j - yrange[0], :] = res
-
     for i in range(xrange[0], xrange[1]):
         for j in range(yrange[0], yrange[1]):
-            y = data_vector(images[start:end], i, j)
-            C_inv = inverse_variance_vector(images[start:end], i, j)
+            y = data_vector(images[start:end], i, j, expand_factor=expand_factor)
+            C_inv = inverse_variance_vector(images[start:end], i, j, expand_factor=expand_factor)
 
             A = np.dot(X.T * C_inv, X)
             try:
@@ -273,22 +328,22 @@ def solve_linear(images: list[Image], xrange: tuple, yrange: tuple, reference_im
     return result
 
 
-def evaluate_bicubic_legendre(theta, xrange: tuple, yrange: tuple, oversample_ratio=10) -> np.ndarray:
-    """Evaluate the bicubic legendre function with coefficients theta over xrange, yrange."""
+def evaluate_bipolynomial_basis(theta, xrange: tuple, yrange: tuple, oversample_ratio=10, expand_factor: float = 1.0) -> np.ndarray:
+    """Evaluate the bi-polynomial basis function with coefficients theta over xrange, yrange."""
 
     nx = xrange[1] - xrange[0]
     ny = yrange[1] - yrange[0]
     z = np.zeros((nx * oversample_ratio, ny * oversample_ratio))
 
-    x = np.linspace(0.5, -0.5, oversample_ratio + 1)[:-1]
-    y = np.linspace(0.5, -0.5, oversample_ratio + 1)[:-1]
+    x = np.linspace(0.5, -0.5, oversample_ratio + 1)[:-1] / expand_factor
+    y = np.linspace(0.5, -0.5, oversample_ratio + 1)[:-1] / expand_factor
 
     yp = np.empty((oversample_ratio, POLY_ORDER))
     xp = np.empty((oversample_ratio, POLY_ORDER))
 
     for order in range(POLY_ORDER):
-        yp[:, order] = legendre(y, order)
-        xp[:, order] = legendre(x, order)
+        yp[:, order] = basis_function(y, order)
+        xp[:, order] = basis_function(x, order)
 
     for i in range(nx):
         for j in range(ny):
@@ -299,7 +354,7 @@ def evaluate_bicubic_legendre(theta, xrange: tuple, yrange: tuple, oversample_ra
 
 
 def make_difference_images(images: list[Image], theta: np.ndarray, xrange: tuple, yrange: tuple,
-                           output_dir: str = "Results", iteration: int = 0) -> None:
+                           output_dir: str = "Results", iteration: int = 0, expand_factor: float = 1.0) -> None:
     """Construct and save difference images."""
 
     try:
@@ -316,10 +371,10 @@ def make_difference_images(images: list[Image], theta: np.ndarray, xrange: tuple
     for im in images:
 
         for order in range(POLY_ORDER):
-            xp[order] = legendre(im.dx_subpix, order)
-            yp[order] = legendre(im.dy_subpix, order)
-            xp_grad[order] = grad_legendre(im.dx_subpix, order)
-            yp_grad[order] = grad_legendre(im.dy_subpix, order)
+            xp[order] = basis_function(im.dx_subpix/expand_factor, order)
+            yp[order] = basis_function(im.dy_subpix/expand_factor, order)
+            xp_grad[order] = grad_basis_function(im.dx_subpix/expand_factor, order)
+            yp_grad[order] = grad_basis_function(im.dy_subpix/expand_factor, order)
 
         basis = np.zeros((POLY_ORDER, POLY_ORDER))
         for ord_x in range(POLY_ORDER):
@@ -384,7 +439,7 @@ def make_difference_images(images: list[Image], theta: np.ndarray, xrange: tuple
         write_as_fits(f"{output_dir}/{prefix}{os.path.basename(im.f_name)}", im.inv_var)
 
 
-def mask_difference_image_residuals(images: list[Image], threshold: float = 5.0) -> None:
+def mask_difference_image_residuals(images: list[Image], threshold: float = 10.0) -> None:
     """Create a mask to flag high difference image residuals."""
 
     for im in images:
@@ -397,10 +452,11 @@ def mask_difference_image_residuals(images: list[Image], threshold: float = 5.0)
 
         mask = minimum_filter(im.mask, size=3, mode="constant", cval=0.0) * im.vmask
 
-        residual_amplitude = np.std(residual[mask.astype(bool)])
-
         im.vmask = np.ones_like(im.data, dtype=bool)
-        im.vmask[residual**2 > (threshold*residual_amplitude)**2] = 0
+
+        for i in range(3):
+            residual_amplitude = np.std(residual[mask.astype(bool) * im.vmask])
+            im.vmask[residual**2 > (threshold*residual_amplitude)**2] = 0
 
         n_pixels_masked = np.prod(im.data.shape) - np.sum(im.vmask)
         print(f"{im.f_name}: amplitude {residual_amplitude}, threshold {threshold*residual_amplitude}, {n_pixels_masked} pixels masked.")
@@ -419,7 +475,7 @@ def refine_offsets(images: list[Image]) -> np.ndarray:
         # im.inv_var is already set to zero for saturated pixels.
         # For this function we don't want to count adjacent pixels.
 
-        iv = minimum_filter(im.inv_var, size=3, mode="constant", cval=0.0)
+        iv = minimum_filter(im.inv_var, size=5, mode="constant", cval=0.0)
 
         A[0, 0] = np.sum(im.dRdx ** 2 * iv)
         A[0, 1] = np.sum(im.dRdx * im.dRdy * iv)
@@ -476,3 +532,4 @@ def plot_offsets(offsets: np.ndarray, output_dir: str) -> None:
 if __name__ == '__main__':
 
     pass
+

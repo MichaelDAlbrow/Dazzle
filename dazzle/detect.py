@@ -59,7 +59,7 @@ def romanisim_artifacts_mask(im: np.ndarray, outfile=None) -> np.ndarray:
     return mask
 
 
-def detect_variables_from_difference_image_stack(images: list['Image'], threshold: float = 50.0):
+def detect_variables_from_difference_image_stack(images: list['Image'], threshold: float = 50.0, sigmas: list = [4, 8, 16, 32]) -> dict:
     """Detect variables from difference image stack."""
 
     #
@@ -112,7 +112,9 @@ def detect_variables_from_difference_image_stack(images: list['Image'], threshol
     edge_mask[:2, :, :] = 0
     edge_mask[-2:, :, :] = 0
 
-    for temporal_sigma in [2, 4, 8, 16]:
+    peak_locations = {}
+
+    for temporal_sigma in sigmas:
 
         temporal_sigma_int = np.ceil(temporal_sigma).astype(int)
 
@@ -129,12 +131,23 @@ def detect_variables_from_difference_image_stack(images: list['Image'], threshol
         local_peaks = maximum_filter(conv_stack, size=(3*temporal_sigma_int+1, 3*spatial_sigma_int+1, 3*spatial_sigma_int+1)) == conv_stack
         threshold_cut = conv_stack > threshold
         significance_map = local_peaks * threshold_cut
-        peak_locations = np.where((significance_map == 1) & (edge_mask == 1))
+        loc = np.where((significance_map == 1) & (edge_mask == 1))
 
-        #for i, j, k in zip(peak_locations[0], peak_locations[1], peak_locations[2]):
-        #    print(i, j, k, temporal_sigma, stack[i, j, k], conv_stack[i, j, k], edge_mask[i, j, k])
+        peak_locations[f"{temporal_sigma}"] = np.zeros((len(loc[0]), 4))
 
-        return np.array(peak_locations).T
+        peak_locations[f"{temporal_sigma}"][:, :3] = np.array(loc).T
+
+        for m in range(len(loc[0])):
+
+            i = peak_locations[f"{temporal_sigma}"][m, 0].astype(int)
+            j = peak_locations[f"{temporal_sigma}"][m, 1].astype(int)
+            k = peak_locations[f"{temporal_sigma}"][m, 2].astype(int)
+
+            print(i, j, k, temporal_sigma, stack[i, j, k], conv_stack[i, j, k], edge_mask[i, j, k])
+
+            peak_locations[f"{temporal_sigma}"][m, 3] = conv_stack[i, j, k]
+
+    return peak_locations
 
 
 def plot_magnitude_histogram(stars: QTable, file: str = "magnitudes.png") -> None:
@@ -145,8 +158,12 @@ def plot_magnitude_histogram(stars: QTable, file: str = "magnitudes.png") -> Non
     plt.savefig(file, bbox_inches="tight")
 
 
-def display_detected_stars(im: np.ndarray, sources: QTable, file: str = 'detected_stars.png') -> None:
-    """Make a plot of the image with detected stars indicated."""
+def display_detected_stars(im: np.ndarray, sources: QTable = None, positions: np.ndarray = None, file: str = 'detected_stars.png') -> None:
+    """
+    Make a plot of the image with detected stars indicated.
+
+    Stars must be provided either in an astropy QTable or as a numpy array with 2 columns.
+    """
 
     # Display the image with a "square root stretch" - this makes fainter stars show up better
     z_min = np.percentile(im, 2)
@@ -159,11 +176,14 @@ def display_detected_stars(im: np.ndarray, sources: QTable, file: str = 'detecte
     # Plot circles (apertures) on top of the image at the locations
     # of the detected stars. Note that 'xcentroid' and 'ycentroid' are columns
     # in our sources table.
-    positions = np.transpose((sources["xcentroid"], sources["ycentroid"]))
-    apertures = CircularAperture(positions, r=20.0)
-    apertures.plot(color='blue', lw=1.0, alpha=0.5)
+    if sources is QTable:
+        positions = np.transpose((sources["xcentroid"], sources["ycentroid"]))
 
-    plt.savefig(file, bbox_inches="tight")
+    if positions is not None:
+
+        apertures = CircularAperture(positions, r=20.0)
+        apertures.plot(color='blue', lw=1.0, alpha=0.5)
+        plt.savefig(file, bbox_inches="tight")
 
 
 if __name__ == "__main__":

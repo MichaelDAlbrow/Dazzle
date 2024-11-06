@@ -4,10 +4,18 @@ import numpy as np
 from multiprocessing import Pool
 from functools import partial
 
+#
+# Uncomment for code profiling, and set MAX_PARALLEL_PROCESSES to 1
+#
+#import cProfile
+#import pstats
+#from pstats import SortKey
+#import io
+
 from context import dazzle, utils
 
 # For parallel processing. Set this to 1 if you don't want parallel processing.
-# max_parallel_processes = 1
+#MAX_PARALLEL_PROCESSES = 1
 MAX_PARALLEL_PROCESSES = int(os.cpu_count()/2)
 
 
@@ -49,29 +57,35 @@ def reduce_image_section(files: list[str], config_data: dict, input_xrange: tupl
         print(f"Iteration {iteration+1} for {label}:")
 
         # Compute the coefficients of the basis functions for each image pixel
-        print("Computing coefficients for {label}")
+        print(f"Computing coefficients for {label}")
 
         theta = dazzle.solve_linear(images, output_xrange, output_yrange, reference_image_range=reference_image_range,
                                     output_dir=output_dir, expand_factor=expand_factor)
 
         # Compute and save an oversampled image
-        print("Computing oversampled image for {label}")
+        print(f"Computing oversampled image for {label}")
         z = dazzle.evaluate_bipolynomial_basis(theta, output_xrange, output_yrange, expand_factor=expand_factor)
 
-        print("Writing oversampled image for {label}")
+        print(f"Writing oversampled image for {label}")
         dazzle.write_as_fits(f"{output_dir}/oversampled_{iteration:02d}.fits", z)
 
         # Difference images
-        print("Making difference images for {label}")
+        print(f"Making difference images for {label}")
         dazzle.make_difference_images(images, theta, output_xrange, output_yrange, output_dir=output_dir,
                                       iteration=iteration, expand_factor=expand_factor)
 
         # Mask high residual pixels
-        print("Masking high residual pixels for {label}")
+        print(f"Masking high residual pixels for {label}")
         dazzle.mask_difference_image_residuals(images, threshold=10)
 
 
 if __name__ == "__main__":
+
+    #
+    # Uncomment for code profiling
+    #
+    #pr = cProfile.Profile()
+    #pr.enable()
 
     #
     #  Configuration
@@ -141,3 +155,13 @@ if __name__ == "__main__":
         for x_range, y_range, label in zip(x_ranges, y_ranges, labels):
             reduce_image_section(files, config_data, x_range, y_range, label)
 
+    #
+    # Uncomment for code profiling
+    #
+    # pr.disable()
+    #
+    # s = io.StringIO()
+    # sortby = SortKey.CUMULATIVE
+    # ps = pstats.Stats(pr, stream=s).sort_stats(sortby)
+    # ps.print_stats()
+    # print(s.getvalue())

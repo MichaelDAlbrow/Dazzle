@@ -19,8 +19,6 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-#from concurrent.futures import ProcessPoolExecutor
-
 __author__ = "Michael Albrow"
 
 POLY_ORDER = 5  # i.e. 5 coefficients
@@ -190,59 +188,77 @@ def grad_omoms(x: float | np.ndarray, order: int) -> float | np.ndarray:
     raise ValueError("Order must be an integer between 0 and 3.")
 
 
-def data_vector(images: list[Image], i: int, j: int, expand_factor: float = 1.0) -> np.ndarray:
+def data_matrix(images: list[Image], xrange: (int, int), yrange: (int, int), expand_factor: float = 1.0) -> np.ndarray:
     """Compute the vector of all image data values for pixels i, j."""
 
     n = len(images)
     m = n * 6
-    z = np.zeros(m)
+
+    nx = xrange[1] - xrange[0]
+    ny = yrange[1] - yrange[0]
+
+    z = np.zeros((nx, ny, m))
 
     counter = 0
     for im in images:
-        z[counter] = im.data[i + im.dx_int, j + im.dy_int]
+        i0 = im.dx_int+xrange[0]
+        j0 = im.dy_int+yrange[0]
+        z[:, :, counter] = im.data[i0:i0+nx, j0:j0+ny]
         counter += 1
         if im.dx_subpix < 0.5*expand_factor - 1.0:
-            z[counter] = im.data[i + im.dx_int - 1, j + im.dy_int]
+            z[:, :, counter] = im.data[i0-1:i0+nx-1, j0:j0+ny]
             counter += 1
         if im.dx_subpix > -0.5*expand_factor + 1.0:
-            z[counter] = im.data[i + im.dx_int + 1, j + im.dy_int]
+            z[:, :, counter] = im.data[i0+1:i0+nx+1, j0:j0+ny]
             counter += 1
         if im.dy_subpix < 0.5*expand_factor - 1.0:
-            z[counter] = im.data[i + im.dx_int, j + im.dy_int - 1]
+            z[:, :, counter] = im.data[i0:i0+nx, j0-1:j0+ny-1]
             counter += 1
         if im.dy_subpix > -0.5*expand_factor + 1.0:
-            z[counter] = im.data[i + im.dx_int, j + im.dy_int + 1]
+            z[:, :, counter] = im.data[i0:i0+nx, j0+1:j0+ny+1]
             counter += 1
 
-    z = z[:counter]
+    z = z[:, :, :counter]
 
     return z
 
 
-def inverse_variance_vector(images: list[Image], i: int, j: int, expand_factor: float = 1.0) -> np.ndarray:
+def inverse_variance_matrix(images: list[Image], xrange: (int, int), yrange: (int, int),
+                            expand_factor: float = 1.0) -> np.ndarray:
     """Compute the inverse variance vector for all image pixels."""
 
     m = len(images) * 6
-    c = np.zeros(m)
+
+    nx = xrange[1] - xrange[0]
+    ny = yrange[1] - yrange[0]
+
+    c = np.zeros((nx, ny, m))
 
     counter = 0
     for im in images:
-        c[counter] = im.inv_var[i + im.dx_int, j + im.dy_int] * im.vmask[i + im.dx_int, j + im.dy_int]
+        i0 = im.dx_int+xrange[0]
+        j0 = im.dy_int+yrange[0]
+        c[:, :, counter] = (im.inv_var[i0:i0+nx, j0:j0+ny] *
+                            im.vmask[i0:i0+nx, j0:j0+ny])
         counter += 1
         if im.dx_subpix < 0.5*expand_factor - 1.0:
-            c[counter] = im.inv_var[i + im.dx_int - 1, j + im.dy_int] * im.vmask[i + im.dx_int - 1, j + im.dy_int]
+            c[:, :, counter] = (im.inv_var[i0-1:i0+nx-1, j0:j0+ny] *
+                                im.vmask[i0-1:i0+nx-1, j0:j0+ny])
             counter += 1
         if im.dx_subpix > -0.5*expand_factor + 1.0:
-            c[counter] = im.inv_var[i + im.dx_int + 1, j + im.dy_int] * im.vmask[i + im.dx_int + 1, j + im.dy_int]
+            c[:, :, counter] = (im.inv_var[i0+1:i0+nx+1, j0:j0+ny] *
+                                im.vmask[i0+1:i0+nx+1, j0:j0+ny])
             counter += 1
         if im.dy_subpix < 0.5*expand_factor - 1.0:
-            c[counter] = im.inv_var[i + im.dx_int, j + im.dy_int - 1] * im.vmask[i + im.dx_int, j + im.dy_int - 1]
+            c[:, :, counter] = (im.inv_var[i0:i0+nx, j0-1:j0+ny-1] *
+                                im.vmask[i0:i0+nx, j0-1:j0+ny-1])
             counter += 1
         if im.dy_subpix > -0.5*expand_factor + 1.0:
-            c[counter] = im.inv_var[i + im.dx_int, j + im.dy_int + 1] * im.vmask[i + im.dx_int, j + im.dy_int + 1]
+            c[:, :, counter] = (im.inv_var[i0:i0+nx, j0+1:j0+ny+1] *
+                                im.vmask[i0:i0+nx, j0+1:j0+ny+1])
             counter += 1
 
-    c = c[:counter]
+    c = c[:, :, :counter]
 
     return c
 
@@ -287,7 +303,6 @@ def design_matrix(images: list[Image],  expand_factor: float = 1.0) -> np.ndarra
             for ord_y in range(POLY_ORDER):
                 A[k, POLY_ORDER * ord_x + ord_y] = xp[k, ord_x] * yp[k, ord_y]
 
-
     return A
 
 
@@ -304,23 +319,24 @@ def solve_linear(images: list[Image], xrange: tuple, yrange: tuple, reference_im
         end = len(images)
 
     X = design_matrix(images[start:end], expand_factor=expand_factor)
+    y = data_matrix(images[start:end], xrange, yrange, expand_factor=expand_factor)
+    C_inv = inverse_variance_matrix(images[start:end], xrange, yrange, expand_factor=expand_factor)
 
     nx = xrange[1] - xrange[0]
     ny = yrange[1] - yrange[0]
     result = np.zeros((nx, ny, POLY_ORDER, POLY_ORDER))
 
-    for i in range(xrange[0], xrange[1]):
-        for j in range(yrange[0], yrange[1]):
-            y = data_vector(images[start:end], i, j, expand_factor=expand_factor)
-            C_inv = inverse_variance_vector(images[start:end], i, j, expand_factor=expand_factor)
+    for i in range(nx):
+        for j in range(ny):
 
-            A = np.dot(X.T * C_inv, X)
+            A = np.dot(X.T * C_inv[i, j, :], X)
+
             try:
                 B = np.linalg.solve(A, np.identity(A.shape[0]))
             except np.linalg.LinAlgError:
                 continue
 
-            result[i - xrange[0], j - yrange[0], :] = np.dot(B, np.dot(X.T, y * C_inv)).reshape(POLY_ORDER, POLY_ORDER)
+            result[i, j, :] = np.dot(B, np.dot(X.T, y[i, j, :] * C_inv[i, j, :])).reshape(POLY_ORDER, POLY_ORDER)
 
     if save:
         write_as_fits(f"{output_dir}/{output_file}", result)
@@ -328,7 +344,8 @@ def solve_linear(images: list[Image], xrange: tuple, yrange: tuple, reference_im
     return result
 
 
-def evaluate_bipolynomial_basis(theta, xrange: tuple, yrange: tuple, oversample_ratio=10, expand_factor: float = 1.0) -> np.ndarray:
+def evaluate_bipolynomial_basis(theta, xrange: tuple, yrange: tuple, oversample_ratio=10,
+                                expand_factor: float = 1.0) -> np.ndarray:
     """Evaluate the bi-polynomial basis function with coefficients theta over xrange, yrange."""
 
     nx = xrange[1] - xrange[0]
@@ -354,7 +371,8 @@ def evaluate_bipolynomial_basis(theta, xrange: tuple, yrange: tuple, oversample_
 
 
 def make_difference_images(images: list[Image], theta: np.ndarray, xrange: tuple, yrange: tuple,
-                           output_dir: str = "Results", iteration: int = 0, expand_factor: float = 1.0) -> None:
+                           output_dir: str = "Results", iteration: int = 0, expand_factor: float = 1.0,
+                           write_debug_images: bool = False) -> None:
     """Construct and save difference images."""
 
     try:
@@ -406,37 +424,39 @@ def make_difference_images(images: list[Image], theta: np.ndarray, xrange: tuple
                       supplementary_header={"DX_INT": im.dx_int, "DY_INT": im.dy_int,
                                             "DX_SUB": im.dx_subpix, "DY_SUB": im.dy_subpix})
 
-        prefix = f"z_{iteration:02d}_"
-        write_as_fits(f"{output_dir}/{prefix}{os.path.basename(im.f_name)}", im.model)
-
-        prefix = f"r_{iteration:02d}_"
-        r = im.data - im.model
-        r[np.isnan(r)] = 0.0
-        im.difference = r
-        write_as_fits(f"{output_dir}/{prefix}{os.path.basename(im.f_name)}", r)
-
-        prefix = f"rx_{iteration:02d}_"
-        write_as_fits(f"{output_dir}/{prefix}{os.path.basename(im.f_name)}", im.dRdx)
-
-        prefix = f"ry_{iteration:02d}_"
-        write_as_fits(f"{output_dir}/{prefix}{os.path.basename(im.f_name)}", im.dRdy)
-
         prefix = f"a_{iteration:02d}_"
         write_as_fits(f"{output_dir}/{prefix}{os.path.basename(im.f_name)}", im.data)
 
-        prefix = f"e_{iteration:02d}_"
-        r = im.mask * r / im.sigma
-        r[np.isnan(r)] = 0.0
-        write_as_fits(f"{output_dir}/{prefix}{os.path.basename(im.f_name)}", r)
+        if write_debug_images:
 
-        prefix = f"m_{iteration:02d}_"
-        write_as_fits(f"{output_dir}/{prefix}{os.path.basename(im.f_name)}", im.mask)
+            prefix = f"z_{iteration:02d}_"
+            write_as_fits(f"{output_dir}/{prefix}{os.path.basename(im.f_name)}", im.model)
 
-        prefix = f"vm_{iteration:02d}_"
-        write_as_fits(f"{output_dir}/{prefix}{os.path.basename(im.f_name)}", im.vmask)
+            prefix = f"r_{iteration:02d}_"
+            r = im.data - im.model
+            r[np.isnan(r)] = 0.0
+            im.difference = r
+            write_as_fits(f"{output_dir}/{prefix}{os.path.basename(im.f_name)}", r)
 
-        prefix = f"iv_{iteration:02d}_"
-        write_as_fits(f"{output_dir}/{prefix}{os.path.basename(im.f_name)}", im.inv_var)
+            prefix = f"rx_{iteration:02d}_"
+            write_as_fits(f"{output_dir}/{prefix}{os.path.basename(im.f_name)}", im.dRdx)
+
+            prefix = f"ry_{iteration:02d}_"
+            write_as_fits(f"{output_dir}/{prefix}{os.path.basename(im.f_name)}", im.dRdy)
+
+            prefix = f"e_{iteration:02d}_"
+            r = im.mask * r / im.sigma
+            r[np.isnan(r)] = 0.0
+            write_as_fits(f"{output_dir}/{prefix}{os.path.basename(im.f_name)}", r)
+
+            prefix = f"m_{iteration:02d}_"
+            write_as_fits(f"{output_dir}/{prefix}{os.path.basename(im.f_name)}", im.mask)
+
+            prefix = f"vm_{iteration:02d}_"
+            write_as_fits(f"{output_dir}/{prefix}{os.path.basename(im.f_name)}", im.vmask)
+
+            prefix = f"iv_{iteration:02d}_"
+            write_as_fits(f"{output_dir}/{prefix}{os.path.basename(im.f_name)}", im.inv_var)
 
 
 def mask_difference_image_residuals(images: list[Image], threshold: float = 10.0) -> None:
@@ -532,4 +552,3 @@ def plot_offsets(offsets: np.ndarray, output_dir: str) -> None:
 if __name__ == '__main__':
 
     pass
-

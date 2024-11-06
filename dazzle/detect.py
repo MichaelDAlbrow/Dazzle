@@ -1,6 +1,7 @@
 #
 #  Dazzle detect module
 #
+
 import numpy as np
 from photutils.detection import DAOStarFinder
 from photutils.aperture import CircularAperture
@@ -23,7 +24,7 @@ def detect_stars(im: np.ndarray | str, threshold: float = 100.0) -> QTable:
     """Detect stars on image im.
     We assume this is an oversampled image with PSF FWHM of ~ 10 pixels.
     A future improvement would be to use photutils.detection.StarFinder with a PSF from WebbPSF.
-"""
+    """
 
     if isinstance(im, str):
         with fits.open(im) as f:
@@ -39,12 +40,6 @@ def romanisim_artifacts_mask(im: np.ndarray, outfile=None) -> np.ndarray:
     """Detect and mask the square residuals left around saturated stars by RomainISIM/WebbPSF."""
 
     mask = np.ones_like(im)
-    # kernel = -np.ones((46, 46))
-    # kernel[3:43, 3:43] = 0
-    # kernel[1, 1:45] = 2
-    # kernel[-2, 1:45] = 2
-    # kernel[1:45, 1] = 2
-    # kernel[1:45, -2] = 2
     threshold = 100
     kernel = np.array([[-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1],
                        [2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2],

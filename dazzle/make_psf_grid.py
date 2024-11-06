@@ -1,6 +1,5 @@
 import os
 from webbpsf import roman
-from webbpsf.utils import to_griddedpsfmodel
 from astropy.io import fits
 from photutils.psf import GriddedPSFModel
 

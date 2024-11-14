@@ -156,7 +156,6 @@ def plot_magnitude_histogram(stars: QTable, file: str = "magnitudes.png") -> Non
 def display_detected_stars(im: np.ndarray, sources: QTable = None, positions: np.ndarray = None, file: str = 'detected_stars.png') -> None:
     """
     Make a plot of the image with detected stars indicated.
-
     Stars must be provided either in an astropy QTable or as a numpy array with 2 columns.
     """
 

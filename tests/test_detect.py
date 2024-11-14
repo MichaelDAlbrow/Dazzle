@@ -107,7 +107,6 @@ def process_image_section(config_data: dict, label: str) -> None:
     plot_variables(images, variables, plot_dir=output_dir, display_image=images[144].f_name)
 
 
-
 if __name__ == "__main__":
 
     config_data = utils.read_config(f"{os.path.dirname(__file__)}/{sys.argv[1]}")

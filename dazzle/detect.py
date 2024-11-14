@@ -54,7 +54,7 @@ def romanisim_artifacts_mask(im: np.ndarray, outfile=None) -> np.ndarray:
     return mask
 
 
-def detect_variables_from_difference_image_stack(images: list['Image'], threshold: float = 50.0, sigmas: list = [4, 8, 16, 32]) -> dict:
+def detect_variables_from_difference_image_stack(images: list['Image'], threshold: float = 50.0, sigmas: list = [2, 4, 8, 16]) -> dict:
     """Detect variables from difference image stack."""
 
     #

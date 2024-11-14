@@ -8,7 +8,14 @@ import matplotlib.pyplot as plt
 from astropy.io import fits
 from scipy.stats import median_abs_deviation
 
-from context import photometry, utils, detect
+from multiprocessing import Pool
+from functools import partial
+
+from context import utils, photometry, detect
+
+# For parallel processing. Set this to 1 if you don't want parallel processing.
+MAX_PARALLEL_PROCESSES = 1
+#MAX_PARALLEL_PROCESSES = int(os.cpu_count()/2)
 
 
 def save_variables(variables: dict, file_root: str):
@@ -68,17 +75,18 @@ def plot_variables(images: list[photometry.Image], variables: dict, plot_dir: st
             plt.savefig(f"{plot_dir}/variables_images_{timescale}.png")
 
 
-if __name__ == "__main__":
+def process_image_section(config_data: dict, label: str) -> None:
 
-    config_data = utils.read_config(f"{os.path.dirname(__file__)}/{sys.argv[1]}")
+    file_iteration_number = f"{config_data['difference_image_iterations']:02d}"
 
-    output_dir = f"{config_data['output_dir']}/detected_variables"
-
-    files = [f"{config_data['output_dir']}/{f}" for f in os.listdir(config_data["output_dir"]) if
-             f"d_05_{config_data['data_root']}" in f and f.endswith(".fits")]
+    output_dir = f"{config_data['output_dir']}{label}"
+    files = [f"{output_dir}/{f}" for f in os.listdir(output_dir) if
+            f"d_{file_iteration_number}_{config_data['data_root']}" in f and f.endswith(".fits")]
     files.sort()
 
     images = [photometry.Image(f) for f in files]
+
+    output_dir = f"{config_data['output_dir']}{label}/detected_variables"
 
     if os.path.exists(output_dir):
 
@@ -94,5 +102,54 @@ if __name__ == "__main__":
         variables = detect.detect_variables_from_difference_image_stack(images, threshold=4)
         save_variables(variables, f"{output_dir}/variables")
 
+    print(label, variables)
+
     plot_variables(images, variables, plot_dir=output_dir, display_image=images[144].f_name)
+
+
+
+if __name__ == "__main__":
+
+    config_data = utils.read_config(f"{os.path.dirname(__file__)}/{sys.argv[1]}")
+
+    #
+    #  Check for required config fields
+    #
+
+    required_fields = ["data_dir", "data_root", "output_dir", "input_xrange", "input_yrange"]
+    for f in required_fields:
+        if f not in config_data.keys():
+            raise ValueError(f"Missing field {f} in configuration file {sys.argv[1]}.")
+
+    if "image_splits" not in config_data.keys():
+        config_data["image_splits"] = 1
+
+    if "difference_image_iterations" not in config_data.keys():
+        config_data["difference_image_iterations"] = 5
+
+    file_iteration_number = f"{config_data['difference_image_iterations']:02d}"
+
+    #
+    #   Set up image sections
+    #
+
+    labels = []
+    for i in range(config_data["image_splits"]):
+        for j in range(config_data["image_splits"]):
+            labels.append(f"_{i}_{j}")
+
+    #
+    #   Process each image section
+    #
+
+    if MAX_PARALLEL_PROCESSES > 1:
+
+        with Pool(np.min([config_data["image_splits"]**2, MAX_PARALLEL_PROCESSES])) as pool:
+            pool.map(partial(process_image_section, config_data), labels)
+
+    else:
+
+        for label in labels:
+
+            process_image_section(config_data, label)
 

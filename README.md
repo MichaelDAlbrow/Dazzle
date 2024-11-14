@@ -13,5 +13,7 @@ python test_detect.py config_test18.json
 
 python test_photometry.py config_test18.json
 
+The config file, and the scripts, should be edited for your specific purpose.
+
 
 

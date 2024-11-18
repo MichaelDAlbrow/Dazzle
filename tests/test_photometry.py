@@ -16,7 +16,7 @@ from context import utils, photometry
 
 # For parallel processing. Set this to 1 if you don't want parallel processing.
 # max_parallel_processes = 1
-MAX_PARALLEL_PROCESSES = int(os.cpu_count()/2)
+MAX_PARALLEL_PROCESSES = int(os.cpu_count() / 2)
 
 
 def ulens_model1(t: np.ndarray, u0: float, t0: float, tE: float, base_flux: float) -> np.ndarray:
@@ -170,11 +170,11 @@ def phot_multiple(images: list[photometry.Image], positions: np.ndarray, psf_gri
 
                 x = np.arange(xgrid - aperture_radius, xgrid + aperture_radius + 1)
                 y = np.arange(ygrid - aperture_radius, ygrid + aperture_radius + 1)
-                xx, yy = np.meshgrid(x+image_offset[0], y+image_offset[1])
+                xx, yy = np.meshgrid(x + image_offset[0], y + image_offset[1])
 
                 pos = (xpos, ypos)
 
-                z = psf_grid.evaluate(yy, xx, 1.0, pos[1]+image_offset[1], pos[0]+image_offset[0]).T
+                z = psf_grid.evaluate(yy, xx, 1.0, pos[1] + image_offset[1], pos[0] + image_offset[0]).T
 
                 print("xpos, ypos, image_offset, xx, yy, z", xpos, ypos, image_offset, xx, yy, z)
 
@@ -281,13 +281,16 @@ def phot_multiple(images: list[photometry.Image], positions: np.ndarray, psf_gri
             plt.savefig(f"{root_out}_{m:04d}_lightcurve.png")
 
 
-def process_image_section(config_data: dict, label: str, image_offset: (int, int) = (0, 0)) -> None:
+def process_image_section(config_data: dict, label: str, image_offset: (int, int) = (0, 0), timescales=None) -> None:
+
+    if timescales is None:
+        timescales = [2, 4]
 
     file_iteration_number = f"{config_data['difference_image_iterations']:02d}"
 
-    output_dir = f"{config_data['output_dir']}{label}"
+    output_dir = f"{config_data['output_dir']}{label}/detected_variables"
     files = [f"{output_dir}/{f}" for f in os.listdir(output_dir) if
-            f"d_{file_iteration_number}_{config_data['data_root']}" in f and f.endswith(".fits")]
+             f"d_{file_iteration_number}_{config_data['data_root']}" in f and f.endswith(".fits")]
     files.sort()
 
     direct_files = [f.replace(f"d_{file_iteration_number}", f"a_{file_iteration_number}") for f in files]
@@ -297,14 +300,16 @@ def process_image_section(config_data: dict, label: str, image_offset: (int, int
     direct_images = []
     for f_name in direct_files:
         with fits.open(f_name) as f:
-             direct_images.append(f[0].data.T)
+            direct_images.append(f[0].data.T)
 
-    positions = np.loadtxt(f"{output_dir}/positions_vars.txt")
+    for timescale in timescales:
 
-    phot_multiple(images, positions[:, :2], psf_grid, image_offset,
-                  f"{output_dir}/variables_injected_d{file_iteration_number}",
-                  position_convergence_size=4, aperture_radius=3, plot_ulens_model=True, make_image_plots=True,
-                  make_stamps=True, direct_images=direct_images)
+        positions = np.loadtxt(f"{output_dir}/variables_{timescale}.txt")
+
+        phot_multiple(images, positions[:, 1:3], psf_grid, image_offset,
+                      f"{output_dir}/variables_{timescale}_d{file_iteration_number}",
+                      position_convergence_size=4, aperture_radius=3, plot_ulens_model=True, make_image_plots=False,
+                      make_stamps=False, direct_images=direct_images)
 
 
 if __name__ == "__main__":
@@ -371,34 +376,12 @@ if __name__ == "__main__":
         print('labels', labels)
         print('offsets', offsets)
 
-        with Pool(np.min([config_data["image_splits"]**2, MAX_PARALLEL_PROCESSES])) as pool:
+        with Pool(np.min([config_data["image_splits"] ** 2, MAX_PARALLEL_PROCESSES])) as pool:
             pool.starmap(partial(process_image_section, config_data),
                          zip(labels, offsets))
 
     else:
 
         for x_range, y_range, label in zip(x_ranges, y_ranges, labels):
-
             process_image_section(config_data, label, image_offset=(x_range[0], y_range[0]))
 
-        # output_dir = f"{config_data['output_dir']}{label}"
-        # files = [f"{output_dir}/{f}" for f in os.listdir(output_dir) if
-        #          f"d_{file_iteration_number}_{config_data['data_root']}" in f and f.endswith(".fits")]
-        # files.sort()
-        #
-        # direct_files = [f.replace(f"d_{file_iteration_number}", f"a_{file_iteration_number}") for f in files]
-        #
-        # images = [photometry.Image(f) for f in files]
-        #
-        # direct_images = []
-        # for f_name in direct_files:
-        #     with fits.open(f_name) as f:
-        #         direct_images.append(f[0].data.T)
-        #
-        # positions = np.loadtxt(f"{output_dir}/positions_vars.txt")
-        #
-        # params_guess = []
-        # phot_multiple(images, positions[:, :2], psf_grid,
-        #               f"{output_dir}/variables_injected_d{file_iteration_number}",
-        #               position_convergence_size=4, aperture_radius=3, plot_ulens_model=True, make_image_plots=True,
-        #               make_stamps=True, direct_images=direct_images, image_offset=(x_range[0], y_range[0]))

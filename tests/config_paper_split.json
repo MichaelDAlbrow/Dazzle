@@ -1,0 +1,15 @@
+{
+  "data_dir": "/home/users/mda45/RomanISIM/Data/paper",
+  "data_root": "dazzle_paper_t",
+  "output_dir": "/home/users/mda45/RomanISIM/Data/paper_results",
+  "input_xrange": [
+    0,
+    4088
+  ],
+  "input_yrange": [
+    0,
+    4088
+  ],
+  "image_splits": 4,
+  "difference_image_iterations": 5
+}

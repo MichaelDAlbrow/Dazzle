@@ -41,5 +41,9 @@ that the 4088 x 4088 images are split into 16 x (1022 x 1022)
 size, processed in parallel, and with the output sent to different 
 directories.
 
+# Reference
+
+
+Simulated images used in the paper are available at http://www2.phys.canterbury.ac.nz/data/RomanISIM/
 
 

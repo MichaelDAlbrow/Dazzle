@@ -3,6 +3,7 @@
 A python package for over-sampled image construction, difference-imaging, transient detection, and difference-image PSF
 photometry for the Nancy Grace Roman Space Telescope.
 
+The algorithms are described in the accompanying paper.
 
 # Usage
 
@@ -20,6 +21,7 @@ The config file, and the scripts, should be edited for your specific purpose.
 
 A sample json configuration file looks like:
 
+```json
 {
   "data_dir": "/home/users/mda45/RomanISIM/Data/paper",
   "data_root": "dazzle_paper_t",
@@ -35,6 +37,7 @@ A sample json configuration file looks like:
   "image_splits": 4,
   "difference_image_iterations": 5
 }
+```
 
 Most of this is self explanatory. Setting image_splits = 4 means 
 that the 4088 x 4088 images are split into 16 x (1022 x 1022)

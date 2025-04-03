@@ -12,10 +12,12 @@ from astropy.io import fits
 from astropy.wcs import WCS
 
 from scipy.ndimage import minimum_filter
+from scipy.signal import convolve2d
 
 from .utils import write_as_fits
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
@@ -67,6 +69,9 @@ class Image:
         self.x = np.arange(x_range[0], x_range[1])
         self.y = np.arange(y_range[0], y_range[1])
 
+        self.model = None
+        self.noise = None
+        self.vmask_delta = None
         self.difference = None
         self.dRdx = None
         self.dRdy = None
@@ -81,7 +86,7 @@ class Image:
 
         x1_ref, y1_ref = 1, 1
         c = self.wcs.pixel_to_world(x1_ref, y1_ref)
-        x2_ref, y2_ref = ref_im.wcs.world_to_pixel(c)   # Do we want world_to_array_index() here instead?
+        x2_ref, y2_ref = ref_im.wcs.world_to_pixel(c)  # Do we want world_to_array_index() here instead?
         dx = x1_ref - x2_ref
         dy = y1_ref - y2_ref
 
@@ -155,7 +160,7 @@ def grad_legendre(x: float | np.ndarray, order: int) -> float | np.ndarray:
 def omoms(x: float | np.ndarray, order: int) -> float | np.ndarray:
     """Cubic O-MOMS polynomials of given order evaluated at x."""
 
-    x = 3*x + 0.5
+    x = 3 * x + 0.5
 
     match order:
         case 0:
@@ -173,7 +178,7 @@ def omoms(x: float | np.ndarray, order: int) -> float | np.ndarray:
 def grad_omoms(x: float | np.ndarray, order: int) -> float | np.ndarray:
     """Derivatives of cubic O-MOMS polynomials of given order evaluated at x."""
 
-    x = 3*x + 0.5
+    x = 3 * x + 0.5
 
     match order:
         case 0:
@@ -201,21 +206,21 @@ def data_matrix(images: list[Image], xrange: (int, int), yrange: (int, int), exp
 
     counter = 0
     for im in images:
-        i0 = im.dx_int+xrange[0]
-        j0 = im.dy_int+yrange[0]
-        z[:, :, counter] = im.data[i0:i0+nx, j0:j0+ny]
+        i0 = im.dx_int + xrange[0]
+        j0 = im.dy_int + yrange[0]
+        z[:, :, counter] = im.data[i0:i0 + nx, j0:j0 + ny]
         counter += 1
-        if im.dx_subpix < 0.5*expand_factor - 1.0:
-            z[:, :, counter] = im.data[i0-1:i0+nx-1, j0:j0+ny]
+        if im.dx_subpix < 0.5 * expand_factor - 1.0:
+            z[:, :, counter] = im.data[i0 - 1:i0 + nx - 1, j0:j0 + ny]
             counter += 1
-        if im.dx_subpix > -0.5*expand_factor + 1.0:
-            z[:, :, counter] = im.data[i0+1:i0+nx+1, j0:j0+ny]
+        if im.dx_subpix > -0.5 * expand_factor + 1.0:
+            z[:, :, counter] = im.data[i0 + 1:i0 + nx + 1, j0:j0 + ny]
             counter += 1
-        if im.dy_subpix < 0.5*expand_factor - 1.0:
-            z[:, :, counter] = im.data[i0:i0+nx, j0-1:j0+ny-1]
+        if im.dy_subpix < 0.5 * expand_factor - 1.0:
+            z[:, :, counter] = im.data[i0:i0 + nx, j0 - 1:j0 + ny - 1]
             counter += 1
-        if im.dy_subpix > -0.5*expand_factor + 1.0:
-            z[:, :, counter] = im.data[i0:i0+nx, j0+1:j0+ny+1]
+        if im.dy_subpix > -0.5 * expand_factor + 1.0:
+            z[:, :, counter] = im.data[i0:i0 + nx, j0 + 1:j0 + ny + 1]
             counter += 1
 
     z = z[:, :, :counter]
@@ -236,26 +241,26 @@ def inverse_variance_matrix(images: list[Image], xrange: (int, int), yrange: (in
 
     counter = 0
     for im in images:
-        i0 = im.dx_int+xrange[0]
-        j0 = im.dy_int+yrange[0]
-        c[:, :, counter] = (im.inv_var[i0:i0+nx, j0:j0+ny] *
-                            im.vmask[i0:i0+nx, j0:j0+ny])
+        i0 = im.dx_int + xrange[0]
+        j0 = im.dy_int + yrange[0]
+        c[:, :, counter] = (im.inv_var[i0:i0 + nx, j0:j0 + ny] *
+                            im.vmask[i0:i0 + nx, j0:j0 + ny])
         counter += 1
-        if im.dx_subpix < 0.5*expand_factor - 1.0:
-            c[:, :, counter] = (im.inv_var[i0-1:i0+nx-1, j0:j0+ny] *
-                                im.vmask[i0-1:i0+nx-1, j0:j0+ny])
+        if im.dx_subpix < 0.5 * expand_factor - 1.0:
+            c[:, :, counter] = (im.inv_var[i0 - 1:i0 + nx - 1, j0:j0 + ny] *
+                                im.vmask[i0 - 1:i0 + nx - 1, j0:j0 + ny])
             counter += 1
-        if im.dx_subpix > -0.5*expand_factor + 1.0:
-            c[:, :, counter] = (im.inv_var[i0+1:i0+nx+1, j0:j0+ny] *
-                                im.vmask[i0+1:i0+nx+1, j0:j0+ny])
+        if im.dx_subpix > -0.5 * expand_factor + 1.0:
+            c[:, :, counter] = (im.inv_var[i0 + 1:i0 + nx + 1, j0:j0 + ny] *
+                                im.vmask[i0 + 1:i0 + nx + 1, j0:j0 + ny])
             counter += 1
-        if im.dy_subpix < 0.5*expand_factor - 1.0:
-            c[:, :, counter] = (im.inv_var[i0:i0+nx, j0-1:j0+ny-1] *
-                                im.vmask[i0:i0+nx, j0-1:j0+ny-1])
+        if im.dy_subpix < 0.5 * expand_factor - 1.0:
+            c[:, :, counter] = (im.inv_var[i0:i0 + nx, j0 - 1:j0 + ny - 1] *
+                                im.vmask[i0:i0 + nx, j0 - 1:j0 + ny - 1])
             counter += 1
-        if im.dy_subpix > -0.5*expand_factor + 1.0:
-            c[:, :, counter] = (im.inv_var[i0:i0+nx, j0+1:j0+ny+1] *
-                                im.vmask[i0:i0+nx, j0+1:j0+ny+1])
+        if im.dy_subpix > -0.5 * expand_factor + 1.0:
+            c[:, :, counter] = (im.inv_var[i0:i0 + nx, j0 + 1:j0 + ny + 1] *
+                                im.vmask[i0:i0 + nx, j0 + 1:j0 + ny + 1])
             counter += 1
 
     c = c[:, :, :counter]
@@ -263,27 +268,27 @@ def inverse_variance_matrix(images: list[Image], xrange: (int, int), yrange: (in
     return c
 
 
-def design_matrix(images: list[Image],  expand_factor: float = 1.0) -> np.ndarray:
+def design_matrix(images: list[Image], expand_factor: float = 1.0) -> np.ndarray:
     """Compute the design matrix for bi-poly basis functions, given a list of images with
     pixel offsets from a reference."""
 
     dx = []
     dy = []
     for k, im in enumerate(images):
-        dx.append(im.dx_subpix/expand_factor)
-        dy.append(im.dy_subpix/expand_factor)
-        if im.dx_subpix < 0.5*expand_factor - 1.0:
-            dx.append((im.dx_subpix+1.0)/expand_factor)
-            dy.append(im.dy_subpix/expand_factor)
-        if im.dx_subpix > -0.5*expand_factor + 1.0:
-            dx.append((im.dx_subpix-1.0)/expand_factor)
-            dy.append(im.dy_subpix/expand_factor)
-        if im.dy_subpix < 0.5*expand_factor - 1.0:
-            dx.append(im.dx_subpix/expand_factor)
-            dy.append((im.dy_subpix+1.0)/expand_factor)
-        if im.dy_subpix > -0.5*expand_factor + 1.0:
-            dx.append(im.dx_subpix/expand_factor)
-            dy.append((im.dy_subpix-1.0)/expand_factor)
+        dx.append(im.dx_subpix / expand_factor)
+        dy.append(im.dy_subpix / expand_factor)
+        if im.dx_subpix < 0.5 * expand_factor - 1.0:
+            dx.append((im.dx_subpix + 1.0) / expand_factor)
+            dy.append(im.dy_subpix / expand_factor)
+        if im.dx_subpix > -0.5 * expand_factor + 1.0:
+            dx.append((im.dx_subpix - 1.0) / expand_factor)
+            dy.append(im.dy_subpix / expand_factor)
+        if im.dy_subpix < 0.5 * expand_factor - 1.0:
+            dx.append(im.dx_subpix / expand_factor)
+            dy.append((im.dy_subpix + 1.0) / expand_factor)
+        if im.dy_subpix > -0.5 * expand_factor + 1.0:
+            dx.append(im.dx_subpix / expand_factor)
+            dy.append((im.dy_subpix - 1.0) / expand_factor)
 
     dx = np.array(dx)
     dy = np.array(dy)
@@ -308,7 +313,7 @@ def design_matrix(images: list[Image],  expand_factor: float = 1.0) -> np.ndarra
 
 def solve_linear(images: list[Image], xrange: tuple, yrange: tuple, reference_image_range: tuple = None,
                  expand_factor: float = 1.0, save: bool = True, output_dir: str = "tests",
-                 output_file: str = "coefficients.fits") -> np.ndarray:
+                 output_file: str = "coefficients.fits", theta: np.ndarray = None) -> np.ndarray:
     """For each pixel, set up and solve the system of linear equations to compute the basis coefficients."""
 
     if reference_image_range is not None:
@@ -324,19 +329,52 @@ def solve_linear(images: list[Image], xrange: tuple, yrange: tuple, reference_im
 
     nx = xrange[1] - xrange[0]
     ny = yrange[1] - yrange[0]
-    result = np.zeros((nx, ny, POLY_ORDER, POLY_ORDER))
+
+    # We use compute_mask to only re-solve for pixels that have changed their vmask and their neighbours
+
+    if theta is not None:
+
+        compute_mask = np.zeros((nx, ny), dtype=bool)
+        result = theta
+        m = np.ones((3, 3)) / 5
+        m[0, 0] = 0
+        m[0, 2] = 0
+        m[2, 0] = 0
+        m[2, 2] = 0
+
+        for im in images:
+
+            i0 = im.dx_int + xrange[0]
+            j0 = im.dy_int + yrange[0]
+
+            if im.vmask_delta is None:
+
+                compute_mask = np.ones_like(im.data, dtype=bool)
+
+            else:
+
+                compute_mask_im = convolve2d(im.vmask_delta[i0:i0 + nx, j0:j0 + ny], m, mode="same", boundary="fill",
+                                             fillvalue=1)
+                compute_mask[compute_mask_im > 0.01] = 1
+
+    else:
+
+        compute_mask = np.ones((nx, ny), dtype=bool)
+        result = np.zeros((nx, ny, POLY_ORDER, POLY_ORDER))
 
     for i in range(nx):
         for j in range(ny):
 
-            A = np.dot(X.T * C_inv[i, j, :], X)
+            if compute_mask[i, j]:
 
-            try:
-                B = np.linalg.solve(A, np.identity(A.shape[0]))
-            except np.linalg.LinAlgError:
-                continue
+                A = np.dot(X.T * C_inv[i, j, :], X)
 
-            result[i, j, :] = np.dot(B, np.dot(X.T, y[i, j, :] * C_inv[i, j, :])).reshape(POLY_ORDER, POLY_ORDER)
+                try:
+                    B = np.linalg.solve(A, np.identity(A.shape[0]))
+                except np.linalg.LinAlgError:
+                    continue
+
+                result[i, j, :] = np.dot(B, np.dot(X.T, y[i, j, :] * C_inv[i, j, :])).reshape(POLY_ORDER, POLY_ORDER)
 
     if save:
         write_as_fits(f"{output_dir}/{output_file}", result)
@@ -372,7 +410,7 @@ def evaluate_bipolynomial_basis(theta, xrange: tuple, yrange: tuple, oversample_
 
 def make_difference_images(images: list[Image], theta: np.ndarray, xrange: tuple, yrange: tuple,
                            output_dir: str = "Results", iteration: int = 0, expand_factor: float = 1.0,
-                           write_debug_images: bool = False) -> None:
+                           write_debug_images: bool = False, write_difference_images: bool = True) -> None:
     """Construct and save difference images."""
 
     try:
@@ -389,10 +427,10 @@ def make_difference_images(images: list[Image], theta: np.ndarray, xrange: tuple
     for im in images:
 
         for order in range(POLY_ORDER):
-            xp[order] = basis_function(im.dx_subpix/expand_factor, order)
-            yp[order] = basis_function(im.dy_subpix/expand_factor, order)
-            xp_grad[order] = grad_basis_function(im.dx_subpix/expand_factor, order)
-            yp_grad[order] = grad_basis_function(im.dy_subpix/expand_factor, order)
+            xp[order] = basis_function(im.dx_subpix / expand_factor, order)
+            yp[order] = basis_function(im.dy_subpix / expand_factor, order)
+            xp_grad[order] = grad_basis_function(im.dx_subpix / expand_factor, order)
+            yp_grad[order] = grad_basis_function(im.dy_subpix / expand_factor, order)
 
         basis = np.zeros((POLY_ORDER, POLY_ORDER))
         for ord_x in range(POLY_ORDER):
@@ -411,75 +449,87 @@ def make_difference_images(images: list[Image], theta: np.ndarray, xrange: tuple
             np.einsum("ijml,m,l", theta, xp, yp_grad))
 
         # Update mask to include edge pixels
-        im.mask[:xrange[0]+2, :] = 0
-        im.mask[xrange[1]-3:, :] = 0
-        im.mask[:, :yrange[0]+2] = 0
-        im.mask[:, yrange[1]-3:] = 0
+        im.mask[:xrange[0] + 2, :] = 0
+        im.mask[xrange[1] - 3:, :] = 0
+        im.mask[:, :yrange[0] + 2] = 0
+        im.mask[:, yrange[1] - 3:] = 0
+
+        # difference image
+        r = im.data - im.model
+        r[np.isnan(r)] = 0.0
+        im.difference = r
 
         # For now, we write out lots of information. This shouldn't be necessary in the future.
 
-        prefix = f"d_{iteration:02d}_"
-        write_as_fits(f"{output_dir}/{prefix}{os.path.basename(im.f_name)}", im.data - im.model,
-                      supplementary_data={"INV_VAR": im.inv_var},
-                      supplementary_header={"DX_INT": im.dx_int, "DY_INT": im.dy_int,
-                                            "DX_SUB": im.dx_subpix, "DY_SUB": im.dy_subpix})
-
-        prefix = f"a_{iteration:02d}_"
-        write_as_fits(f"{output_dir}/{prefix}{os.path.basename(im.f_name)}", im.data)
-
-        if write_debug_images:
-
-            prefix = f"z_{iteration:02d}_"
-            write_as_fits(f"{output_dir}/{prefix}{os.path.basename(im.f_name)}", im.model)
-
-            prefix = f"r_{iteration:02d}_"
-            r = im.data - im.model
-            r[np.isnan(r)] = 0.0
-            im.difference = r
-            write_as_fits(f"{output_dir}/{prefix}{os.path.basename(im.f_name)}", r)
-
-            prefix = f"rx_{iteration:02d}_"
-            write_as_fits(f"{output_dir}/{prefix}{os.path.basename(im.f_name)}", im.dRdx)
-
-            prefix = f"ry_{iteration:02d}_"
-            write_as_fits(f"{output_dir}/{prefix}{os.path.basename(im.f_name)}", im.dRdy)
-
+        if write_difference_images or write_debug_images:
+            prefix = f"d_{iteration:02d}_"
+            write_as_fits(f"{output_dir}/{prefix}{os.path.basename(im.f_name)}", im.difference,
+                          supplementary_data={"INV_VAR": im.inv_var},
+                          supplementary_header={"DX_INT": im.dx_int, "DY_INT": im.dy_int,
+                                                "DX_SUB": im.dx_subpix, "DY_SUB": im.dy_subpix})
+            prefix = f"vm_{iteration:02d}_"
+            write_as_fits(f"{output_dir}/{prefix}{os.path.basename(im.f_name)}", im.vmask)
             prefix = f"e_{iteration:02d}_"
             r = im.mask * r / im.sigma
             r[np.isnan(r)] = 0.0
             write_as_fits(f"{output_dir}/{prefix}{os.path.basename(im.f_name)}", r)
 
+        if iteration == 0:
+            prefix = f"a_{iteration:02d}_"
+            write_as_fits(f"{output_dir}/{prefix}{os.path.basename(im.f_name)}", im.data)
             prefix = f"m_{iteration:02d}_"
             write_as_fits(f"{output_dir}/{prefix}{os.path.basename(im.f_name)}", im.mask)
 
-            prefix = f"vm_{iteration:02d}_"
-            write_as_fits(f"{output_dir}/{prefix}{os.path.basename(im.f_name)}", im.vmask)
+        if write_debug_images:
+            prefix = f"z_{iteration:02d}_"
+            write_as_fits(f"{output_dir}/{prefix}{os.path.basename(im.f_name)}", im.model)
 
-            prefix = f"iv_{iteration:02d}_"
-            write_as_fits(f"{output_dir}/{prefix}{os.path.basename(im.f_name)}", im.inv_var)
+            prefix = f"r_{iteration:02d}_"
+            write_as_fits(f"{output_dir}/{prefix}{os.path.basename(im.f_name)}", r)
+
+            prefix = f"m_{iteration:02d}_"
+            write_as_fits(f"{output_dir}/{prefix}{os.path.basename(im.f_name)}", im.mask)
 
 
-def mask_difference_image_residuals(images: list[Image], threshold: float = 10.0) -> None:
+
+def mask_difference_image_residuals(images: list[Image], threshold: float = 3.0, iteration: int = 0,
+                                    mask_only_positive: bool = True, output_dir: str = "Results") -> int:
     """Create a mask to flag high difference image residuals."""
+
+    #gain = 20.0  # e-/ADU
+    #RON = 0.128  # ADU
+    #RON = np.median(np.abs(images[0].difference))
+    #print(f"RON: {RON}")
+
+    new_pixels_masked = 0
 
     for im in images:
 
-        try:
-            residual = im.mask * im.difference * np.sqrt(im.inv_var)
-        except TypeError:
-            print(f"No difference image for {im.f_name}.")
-            return
-
-        mask = minimum_filter(im.mask, size=3, mode="constant", cval=0.0) * im.vmask
+        if im.vmask is None:
+            last_vmask = np.ones_like(im.data, dtype=bool)
+        else:
+            last_vmask = im.vmask
 
         im.vmask = np.ones_like(im.data, dtype=bool)
 
-        for i in range(3):
-            residual_amplitude = np.std(residual[mask.astype(bool) * im.vmask])
-            im.vmask[residual**2 > (threshold*residual_amplitude)**2] = 0
+        #im.noise = np.sqrt(im.model / gain + RON ** 2)
+        #im.noise = np.sqrt(im.model / gain + RON ** 2)
 
-        n_pixels_masked = np.prod(im.data.shape) - np.sum(im.vmask)
-        print(f"{im.f_name}: amplitude {residual_amplitude}, threshold {threshold*residual_amplitude}, {n_pixels_masked} pixels masked.")
+        if mask_only_positive:
+            im.vmask[im.difference > threshold * im.sigma] = 0
+        else:
+            im.vmask[im.difference ** 2 > (threshold * im.sigma) ** 2] = 0
+
+        im.vmask_delta = np.logical_xor(im.vmask, last_vmask)
+
+        #prefix = f"no_{iteration:02d}_"
+        #write_as_fits(f"{output_dir}/{prefix}{os.path.basename(im.f_name)}", im.noise)
+
+        new_pixels_masked += np.sum(im.vmask_delta)
+
+    print(f"{new_pixels_masked} new pixels masked or unmasked for iteration {iteration:02d}.")
+
+    return new_pixels_masked
 
 
 def refine_offsets(images: list[Image]) -> np.ndarray:
@@ -522,6 +572,9 @@ def refine_offsets(images: list[Image]) -> np.ndarray:
             im.dy_int += 1
             im.dy_subpix -= 1.0
 
+        # This is a flag that forces a new oversampled construction for the whole image
+        im.vmask_delta = np.zeros_like(im.data, dtype=bool)
+
     return delta_xy
 
 
@@ -550,5 +603,4 @@ def plot_offsets(offsets: np.ndarray, output_dir: str) -> None:
 
 
 if __name__ == '__main__':
-
     pass

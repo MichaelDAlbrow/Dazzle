@@ -18,17 +18,24 @@ class Image:
 
         self.f_name = f_name
 
-        with fits.open(f_name) as f:
+        try:
 
-            self.f_name = f_name
-            self.header = f[0].header
-            self.data = f[0].data.T
-            self.inv_var = f[1].data.T
+            with fits.open(f_name) as f:
 
-            self.dx_sub = f[0].header['DX_SUB']
-            self.dy_sub = f[0].header['DY_SUB']
-            self.dx_int = f[0].header['DX_INT']
-            self.dy_int = f[0].header['DY_INT']
+                self.f_name = f_name
+                self.header = f[0].header
+                self.data = f[0].data.T
+                self.inv_var = f[1].data.T
+
+                self.dx_sub = f[0].header['DX_SUB']
+                self.dy_sub = f[0].header['DY_SUB']
+                self.dx_int = f[0].header['DX_INT']
+                self.dy_int = f[0].header['DY_INT']
+
+        except OSError as e:
+
+            print("OS error when reading file", f_name)
+            raise e
 
 
 def read_psf_grid(f_name: str) -> GriddedPSFModel:
@@ -49,26 +56,33 @@ def fit_psf(psf: np.ndarray, im: np.ndarray, inv_var: np.ndarray) -> tuple[float
     return flux, err_flux
 
 
-def fit_psf_base(psf: np.ndarray, im: np.ndarray, inv_var: np.ndarray) -> (float, float):
+def fit_psf_base(psf: np.ndarray, im: np.ndarray, inv_var: np.ndarray) -> (float, float, float):
     """Optimal fit of psf plus a constant to im at pos. """
 
     A = np.array([[1.0, np.sum(psf*inv_var)], [np.sum(psf*inv_var), np.sum(psf**2*inv_var)]])
     b = np.array([np.sum(im*inv_var), np.sum(psf*im*inv_var)])
-    c = np.linalg.solve(A, b)
+
+    try:
+        c = np.linalg.solve(A, b)
+    except np.linalg.LinAlgError:
+        return np.nan, np.nan, np.nan
+
     flux = c[1]
     err_flux = np.sqrt(np.sum(psf**2) / np.sum(psf**2*inv_var))
 
-    return flux, err_flux
+    return flux, err_flux, c[0]
 
 
 def chi2_fit(pos: tuple[float, float], im: np.ndarray, inv_var: np.ndarray, psf_grid: GriddedPSFModel,
-             xx: np.ndarray, yy: np.ndarray, image_offset: (int, int) = (0, 0)) -> float:
+             xx: np.ndarray, yy: np.ndarray, image_offset: (int, int) = (0, 0), fit_radius: int = 2) -> float:
     """Evaluate PSF from grid at pos and return chi^2 for optimal fit to im."""
 
     z = psf_grid.evaluate(yy, xx, 1.0, pos[1]+image_offset[1], pos[0]+image_offset[0]).T
-    z /= np.sum(z)
+
+    z[(xx - pos[0] - image_offset[0]) ** 2 + (yy - pos[1] - image_offset[1]) ** 2 > fit_radius ** 2] = 0.0
 
     flux, err_flux = fit_psf(z, im, inv_var)
+    #flux, err_flux, base = fit_psf_base(z, im, inv_var)
 
     return np.sum((im - flux*z)**2 * inv_var)
 
@@ -102,6 +116,16 @@ def chi2_fit_stack(ref_pos: tuple[float, float], images: list[Image], psf_grid: 
     return chi2
 
 
+def position_out_of_bounds(position: np.ndarray, radius: int, im_size: tuple[int, int], tolerance: int = 5) -> bool:
+    """Return True if position is out of bounds."""
+
+    test_radius = radius + tolerance
+    if test_radius < position[0] < im_size[0] - test_radius and test_radius < position[1] < im_size[1] - test_radius:
+        return False
+
+    return True
+
+
 def optimize_position(im: np.ndarray, inv_var: np.ndarray, psf_grid: GriddedPSFModel, xx: np.ndarray, yy: np.ndarray,
                       pos: tuple[float, float], image_offset: (int, int) = (0, 0)) -> tuple[float, float]:
     """Optimize star position for PSF fit to single image."""
@@ -112,7 +136,7 @@ def optimize_position(im: np.ndarray, inv_var: np.ndarray, psf_grid: GriddedPSFM
     #
     # Initial grid search
     #
-    chi2min = 1.e6
+    chi2min = 1.e20
     for dx in np.linspace(-0.5, 0.5, 11):
         for dy in np.linspace(-0.5, 0.5, 11):
             pos = np.array([x0+dx, y0+dy])
@@ -181,6 +205,9 @@ def optimize_position_stack(images: list[Image], ref_pos: tuple[int, int], psf_g
     print(f"Grid min chi2 of {chi2_min} at ({x1}, {y1}).")
 
     initial_ref_pos = np.array([x1, y1])
+
+    if position_out_of_bounds(initial_ref_pos, rad, images[0].data.shape):
+        raise ValueError("Position out of bounds")
 
     initial_simplex = np.zeros((3, 2))
     initial_simplex[0, :] = initial_ref_pos

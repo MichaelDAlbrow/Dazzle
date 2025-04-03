@@ -16,12 +16,11 @@ from context import dazzle, utils
 
 # For parallel processing. Set this to 1 if you don't want parallel processing.
 #MAX_PARALLEL_PROCESSES = 1
-MAX_PARALLEL_PROCESSES = int(os.cpu_count()/2)
+MAX_PARALLEL_PROCESSES = int(os.cpu_count() / 2)
 
 
 def reduce_image_section(files: list[str], config_data: dict, input_xrange: tuple[int, int],
                          input_yrange: tuple[int, int], label: str) -> None:
-
     output_dir = f"{config_data['output_dir']}{label}"
 
     os.mkdir(output_dir)
@@ -52,31 +51,49 @@ def reduce_image_section(files: list[str], config_data: dict, input_xrange: tupl
 
     expand_factor = config_data["expand_factor"]
 
-    for iteration in range(config_data["difference_image_iterations"]+1):
+    theta = None
 
-        print(f"Iteration {iteration+1} for {label}:")
+    n_masked_pixels = 1
 
-        # Compute the coefficients of the basis functions for each image pixel
-        print(f"Computing coefficients for {label}")
+    for iteration in range(config_data["difference_image_iterations"] + 1):
 
-        theta = dazzle.solve_linear(images, output_xrange, output_yrange, reference_image_range=reference_image_range,
-                                    output_dir=output_dir, expand_factor=expand_factor)
+        print(f"Iteration {iteration + 1} for {label}:")
 
-        # Compute and save an oversampled image
-        print(f"Computing oversampled image for {label}")
-        z = dazzle.evaluate_bipolynomial_basis(theta, output_xrange, output_yrange, expand_factor=expand_factor)
+        if n_masked_pixels > 0:
 
-        print(f"Writing oversampled image for {label}")
-        dazzle.write_as_fits(f"{output_dir}/oversampled_{iteration:02d}.fits", z)
+            # Compute the coefficients of the basis functions for each image pixel
+            print(f"Computing coefficients for {label}")
 
-        # Difference images
-        print(f"Making difference images for {label}")
-        dazzle.make_difference_images(images, theta, output_xrange, output_yrange, output_dir=output_dir,
-                                      iteration=iteration, expand_factor=expand_factor)
+            theta = dazzle.solve_linear(images, output_xrange, output_yrange,
+                                        reference_image_range=reference_image_range, save=False,
+                                        output_dir=output_dir, expand_factor=expand_factor, theta=theta)
 
-        # Mask high residual pixels
-        print(f"Masking high residual pixels for {label}")
-        dazzle.mask_difference_image_residuals(images, threshold=10)
+            # Compute and save an oversampled image
+            print(f"Computing oversampled image for {label}")
+            z = dazzle.evaluate_bipolynomial_basis(theta, output_xrange, output_yrange, expand_factor=expand_factor)
+
+            print(f"Writing oversampled image for {label}")
+            write_difference_images = False
+            if iteration == int(config_data["difference_image_iterations"]):
+                dazzle.write_as_fits(f"{output_dir}/oversampled_{iteration:02d}.fits", z)
+                write_difference_images = True
+
+            # Difference images
+            print(f"Making difference images for {label}")
+            dazzle.make_difference_images(images, theta, output_xrange, output_yrange, output_dir=output_dir,
+                                          iteration=iteration, expand_factor=expand_factor, write_debug_images=False,
+                                          write_difference_images=write_difference_images)
+
+            # Mask high residual pixels
+            print(f"Masking high residual pixels for {label}")
+            if iteration % 4 != 0:
+                mask_threshold = 4
+                n_masked_pixels = dazzle.mask_difference_image_residuals(images, threshold=mask_threshold,
+                                                                         output_dir=output_dir, iteration=iteration)
+
+            # Refine offsets
+            #if iteration % 4 == 0:
+            #    _ = dazzle.refine_offsets(images)
 
 
 if __name__ == "__main__":
@@ -121,6 +138,9 @@ if __name__ == "__main__":
              config_data["data_root"] in f and f.endswith(".fits")]
 
     files.sort()
+
+    print("Found files:")
+    print(files)
 
     #
     #   Set up image sections

@@ -14,8 +14,8 @@ from functools import partial
 from context import utils, photometry, detect
 
 # For parallel processing. Set this to 1 if you don't want parallel processing.
-MAX_PARALLEL_PROCESSES = 1
-#MAX_PARALLEL_PROCESSES = int(os.cpu_count()/2)
+#MAX_PARALLEL_PROCESSES = 1
+MAX_PARALLEL_PROCESSES = int(os.cpu_count()/2)
 
 
 def save_variables(variables: dict, file_root: str):
@@ -81,7 +81,7 @@ def process_image_section(config_data: dict, label: str) -> None:
 
     output_dir = f"{config_data['output_dir']}{label}"
     files = [f"{output_dir}/{f}" for f in os.listdir(output_dir) if
-            f"d_{file_iteration_number}_{config_data['data_root']}" in f and f.endswith(".fits")]
+            f"d_{file_iteration_number}_{config_data['data_root']}" in f and f.endswith(".fits") and f[0].isalpha()]
     files.sort()
 
     images = [photometry.Image(f) for f in files]

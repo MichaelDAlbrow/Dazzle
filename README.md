@@ -5,6 +5,10 @@ photometry for the Nancy Grace Roman Space Telescope.
 
 The algorithms are described in the accompanying paper.
 
+# Citation
+
+[Albrow, M.D., 2025, AJ, 169, 297](https://iopscience.iop.org/article/10.3847/1538-3881/adc9a1)
+
 # Usage
 
 The tests directory contains sample scripts for running the package. Typically they would be run in the order:
